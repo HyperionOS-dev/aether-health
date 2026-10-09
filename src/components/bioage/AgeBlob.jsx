@@ -76,10 +76,10 @@ export default function AgeBlob({ number, deltaLabel, deltaTone = "younger", siz
       const c = TONES[deltaTone] || TONES.neutral;
       ctx.clearRect(0, 0, S, S);
 
-      const cx = r + Math.sin(t * 0.7) * (r * 0.03);
-      const cy = r + Math.cos(t * 0.58) * (r * 0.03);
-      const breath = 0.98 + Math.sin(t * 0.9) * 0.04;
-      const phase = t * 1.1;
+      const cx = r + Math.sin(t * 0.9) * (r * 0.05);
+      const cy = r + Math.cos(t * 0.74) * (r * 0.055);
+      const breath = 0.96 + Math.sin(t * 1.2) * 0.07;
+      const phase = t * 1.6;
 
       const g = ctx.createRadialGradient(cx, cy, baseR * 0.1, cx, cy, baseR * breath);
       g.addColorStop(0, hexA(c.glow, 0.20));
@@ -95,11 +95,12 @@ export default function AgeBlob({ number, deltaLabel, deltaTone = "younger", siz
 
       ctx.globalCompositeOperation = "lighter";
       for (const p of parts) {
-        const x = p.bx + Math.sin(t * p.sp + p.ph) * p.amp + (cx - r);
-        const y = p.by + Math.cos(t * p.sp * 0.8 + p.ph) * p.amp + (cy - r);
+        const drift = p.amp * 1.6;
+        const x = p.bx + Math.sin(t * (p.sp * 1.7) + p.ph) * drift + (cx - r);
+        const y = p.by + Math.cos(t * (p.sp * 1.35) + p.ph) * drift + (cy - r);
         ctx.beginPath();
-        ctx.fillStyle = hexA(c.core, p.a);
-        ctx.arc(x, y, p.rr, 0, Math.PI * 2);
+        ctx.fillStyle = hexA(c.core, p.a + 0.1);
+        ctx.arc(x, y, p.rr * 1.15, 0, Math.PI * 2);
         ctx.fill();
       }
       ctx.globalCompositeOperation = "source-over";
@@ -122,7 +123,7 @@ export default function AgeBlob({ number, deltaLabel, deltaTone = "younger", siz
       if (!running) { raf = null; return; }
       raf = requestAnimationFrame(loop);
       const dt = now - last;
-      if (dt < 24) return; // ~40fps cap
+      if (dt < 20) return; // ~50fps cap
       last = now;
       t += dt * 0.001;
       frame(t);
