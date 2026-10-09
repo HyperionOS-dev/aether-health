@@ -76,10 +76,10 @@ export default function AgeBlob({ number, deltaLabel, deltaTone = "younger", siz
       const c = TONES[deltaTone] || TONES.neutral;
       ctx.clearRect(0, 0, S, S);
 
-      const cx = r + Math.sin(t * 0.4) * (r * 0.025);
-      const cy = r + Math.cos(t * 0.33) * (r * 0.025);
-      const breath = 0.98 + Math.sin(t * 0.5) * 0.02;
-      const phase = t * 0.6;
+      const cx = r + Math.sin(t * 0.7) * (r * 0.03);
+      const cy = r + Math.cos(t * 0.58) * (r * 0.03);
+      const breath = 0.98 + Math.sin(t * 0.9) * 0.04;
+      const phase = t * 1.1;
 
       const g = ctx.createRadialGradient(cx, cy, baseR * 0.1, cx, cy, baseR * breath);
       g.addColorStop(0, hexA(c.glow, 0.20));
@@ -122,7 +122,7 @@ export default function AgeBlob({ number, deltaLabel, deltaTone = "younger", siz
       if (!running) { raf = null; return; }
       raf = requestAnimationFrame(loop);
       const dt = now - last;
-      if (dt < 33) return; // ~30fps cap
+      if (dt < 24) return; // ~40fps cap
       last = now;
       t += dt * 0.001;
       frame(t);
