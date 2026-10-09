@@ -1,0 +1,65 @@
+@import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root, .dark {
+    --background: 223 24% 6%;
+    --foreground: 0 0% 100%;
+    --card: 225 23% 10%;
+    --card-foreground: 0 0% 100%;
+    --popover: 225 23% 10%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 0 0% 100%;
+    --primary-foreground: 223 24% 6%;
+    --secondary: 224 26% 14%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 224 26% 14%;
+    --muted-foreground: 221 14% 60%;
+    --accent: 224 26% 14%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 4 100% 59%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 224 23% 19%;
+    --input: 224 23% 19%;
+    --ring: 151 100% 45%;
+    --surface: 224 26% 14%;
+    --hairline: 224 23% 19%;
+    --strain: 20 100% 50%;
+    --recovery: 151 100% 45%;
+    --sleep: 265 55% 78%;
+    --caution: 50 100% 50%;
+    --danger: 4 100% 59%;
+    --chart-1: 20 100% 50%;
+    --chart-2: 151 100% 45%;
+    --chart-3: 186 100% 50%;
+    --chart-4: 50 100% 50%;
+    --chart-5: 4 100% 59%;
+    --radius: 1rem;
+    --font-heading: 'Chakra Petch', ui-sans-serif, system-ui, sans-serif;
+    --font-body: 'Inter', ui-sans-serif, system-ui, sans-serif;
+    --font-display: 'Chakra Petch', ui-sans-serif, system-ui, sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --sidebar-background: 225 23% 10%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 151 100% 45%;
+    --sidebar-primary-foreground: 223 24% 6%;
+    --sidebar-accent: 224 26% 14%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 224 23% 19%;
+    --sidebar-ring: 151 100% 45%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  body {
+    @apply bg-background text-foreground font-body antialiased;
+  }
+}
+

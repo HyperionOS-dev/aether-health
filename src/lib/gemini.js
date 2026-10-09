@@ -1,0 +1,142 @@
+// Browser-only Gemini call for the Biological Age AI bubble. The API key lives ONLY
+// in localStorage — never in an entity/DB, never sent to the app's backend, never in
+// a URL, log, or error message. Calls go straight to Google's REST endpoint with the
+// x-goog-api-key header.
+//
+// Endpoint: the stable :generateContent REST path (documented and CORS-enabled).
+// Default model: gemini-3.8-flash (current free-tier Flash; editable in settings).
+
+import { BIO_AGE_CONFIG_VERSION } from "./bioAgeConfig";
+
+const KEY_STORE = "aether.bioage.geminiKey";
+const MODEL_STORE = "aether.bioage.geminiModel";
+const ACK_STORE = "aether.bioage.privacyAck";
+const DEFAULT_MODEL = "gemini-3.8-flash";
+const CACHE_STORE = "aether.bioage.aiCache";
+const MIN_CALL_GAP_MS = 10000;
+
+const endpoint = (model) =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+
+export const geminiSettings = {
+  getKey: () => localStorage.getItem(KEY_STORE) || "",
+  setKey: (k) => (k ? localStorage.setItem(KEY_STORE, k) : localStorage.removeItem(KEY_STORE)),
+  getModel: () => localStorage.getItem(MODEL_STORE) || DEFAULT_MODEL,
+  setModel: (m) => localStorage.setItem(MODEL_STORE, m || DEFAULT_MODEL),
+  isAcknowledged: () => localStorage.getItem(ACK_STORE) === "1",
+  acknowledge: () => localStorage.setItem(ACK_STORE, "1"),
+  loadCache: () => {
+    try { return JSON.parse(localStorage.getItem(CACHE_STORE) || "{}"); } catch { return {}; }
+  },
+  saveCache: (c) => localStorage.setItem(CACHE_STORE, JSON.stringify(c)),
+};
+
+export const MIN_CALL_GAP = MIN_CALL_GAP_MS;
+
+// Privacy-safe payload: integer age, window length, factor values/years/targets.
+// No dates, raw HR streams, workout names, name, or birth year.
+export function buildPayload(result) {
+  return {
+    configVersion: BIO_AGE_CONFIG_VERSION,
+    age: Math.round(result.age),
+    windowDays: result.days,
+    confidence: Math.round(result.confidence * 100) / 100,
+    totalYears: result.totalYears,
+    factors: result.factors
+      .filter((f) => !f.excluded)
+      .map((f) => ({
+        label: f.label,
+        value: f.value != null ? Math.round(f.value * 100) / 100 : null,
+        unit: f.unit,
+        target: f.target,
+        years: f.yearsShown,
+      })),
+  };
+}
+
+export function payloadHash(payload) {
+  const s = JSON.stringify(payload);
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) | 0;
+  return String(h);
+}
+
+const SYSTEM_PROMPT =
+  "You explain a lifestyle-based biological-age estimate. Use ONLY the numbers provided; do not invent values. " +
+  "Respond in <=110 words, plain language. Name the single biggest help and the single biggest drag, each with its years value. " +
+  "Give one concrete, safe, non-medical suggestion for the biggest drag. Never diagnose, never give medical advice, " +
+  "and never claim to measure true biological age.";
+
+export async function callGemini(payload, { signal } = {}) {
+  const key = geminiSettings.getKey();
+  const model = geminiSettings.getModel();
+  if (!key) throw new Error("NO_KEY");
+  if (typeof navigator !== "undefined" && navigator.onLine === false) throw new Error("OFFLINE");
+
+  const body = {
+    systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
+    contents: [{ parts: [{ text: JSON.stringify(payload) }] }],
+    generationConfig: { temperature: 0.3, maxOutputTokens: 220 },
+  };
+
+  let res;
+  try {
+    res = await fetch(endpoint(model), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (e) {
+    if (e.name === "AbortError") throw e;
+    // A fetch failure while online is typically a CORS/network block.
+    throw new Error(navigator.onLine === false ? "OFFLINE" : "BLOCKED");
+  }
+
+  if (res.status === 429) throw new Error("QUOTA");
+  if (res.status === 400 || res.status === 401 || res.status === 403) throw new Error("INVALID_KEY");
+  if (!res.ok) throw new Error("HTTP_" + res.status);
+
+  const data = await res.json();
+  const text = (data?.candidates?.[0]?.content?.parts || [])
+    .map((p) => p.text || "")
+    .join("")
+    .trim();
+  if (!text) throw new Error("EMPTY");
+  return text;
+}
+
+// Deterministic local explanation from the factor table — shown when there is no key
+// or the call fails, so the bubble is never empty.
+export function localExplanation(result) {
+  const active = result.factors.filter((f) => !f.excluded && f.yearsShown != null);
+  if (!active.length) return "Not enough factors yet to explain. Keep syncing your health data.";
+  const help = [...active].sort((a, b) => a.yearsShown - b.yearsShown)[0];
+  const drag = [...active].sort((a, b) => b.yearsShown - a.yearsShown)[0];
+  const fmt = (n) => (Math.abs(n) < 0.05 ? "0.0" : (n > 0 ? "+" : "") + n.toFixed(1));
+  const parts = [];
+  if (help.yearsShown < -0.05) parts.push(`Biggest help: ${help.label.toLowerCase()} (${fmt(help.yearsShown)} yrs)`);
+  if (drag.yearsShown > 0.05) parts.push(`Biggest drag: ${drag.label.toLowerCase()} (${fmt(drag.yearsShown)} yrs)`);
+  if (drag.yearsShown > 0.05 && DRAG_TIPS[drag.id]) parts.push(DRAG_TIPS[drag.id]);
+  if (!parts.length) parts.push("All measured factors are near their targets — keep it up.");
+  return parts.join(". ") + ".";
+}
+
+const DRAG_TIPS = {
+  sleep: "Try a consistent 7-9h bedtime window",
+  consistency: "Anchor a fixed wake time, even on weekends",
+  rhr: "Add easy aerobic work and prioritise recovery sleep",
+  steps: "Build up a daily walk to raise your step count",
+  activity: "Add one brisk session this week toward 150 min",
+};
+
+export function friendlyError(code) {
+  switch (code) {
+    case "NO_KEY": return "Add a Gemini key for a fuller explanation.";
+    case "OFFLINE": return "You're offline — showing a local estimate.";
+    case "QUOTA": return "Gemini quota reached (429) — showing a local estimate.";
+    case "INVALID_KEY": return "Gemini rejected the key — showing a local estimate.";
+    case "BLOCKED": return "Gemini blocked this browser request (CORS/network) — showing a local estimate.";
+    default: return "Couldn't reach Gemini — showing a local estimate.";
+  }
+}
