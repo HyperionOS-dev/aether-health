@@ -121,7 +121,7 @@ const toClock = (m: number) => {
 const DAY_FIELDS = [
   "hrv", "resting_hr", "steps", "weight", "spo2", "calories",
   "sleep_minutes", "deep_minutes", "light_minutes", "rem_minutes", "awake_minutes",
-  "nap_minutes", "skin_temp", "respiratory_rate",
+  "nap_minutes", "skin_temp", "respiratory_rate", "body_fat",
 ];
 
 const isNum = (v: any) => typeof v === "number" && Number.isFinite(v);
@@ -138,6 +138,89 @@ function dayForTimestamp(timestamp: number, offset: number): string {
   return `${local.getUTCFullYear()}-${pad(local.getUTCMonth() + 1)}-${pad(local.getUTCDate())}`;
 }
 
+function parsePointValue(value: unknown): any {
+  if (typeof value !== "string") return value;
+  try { return JSON.parse(value); } catch { return Number(value); }
+}
+
+function numberFrom(value: any, ...keys: string[]): number | null {
+  const candidate = value && typeof value === "object"
+    ? keys.map((key) => value[key]).find((entry) => entry != null)
+    : value;
+  const parsed = Number(candidate);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+const DETAIL_ARRAY_FIELDS = [
+  "_resting_points", "_spo2_points", "_hrv_points", "_skin_temp_points",
+  "_weight_points", "_body_fat_points", "_sleep_segments",
+];
+
+function uniqueEntries(...lists: any[][]): any[] {
+  const entries = new Map<string, any>();
+  for (const list of lists) for (const entry of list || []) entries.set(JSON.stringify(entry), entry);
+  return [...entries.values()];
+}
+
+function uniqueHeartRatePoints(...lists: number[][]): number[] {
+  const points = new Map<string, [number, number]>();
+  for (const list of lists) {
+    for (let index = 0; index + 1 < (list || []).length; index += 2) {
+      const point: [number, number] = [list[index], list[index + 1]];
+      points.set(`${point[0]}|${point[1]}`, point);
+    }
+  }
+  return [...points.values()].sort((a, b) => a[0] - b[0]).flat();
+}
+
+export function mergeHuaweiDays(previous: Record<string, any>, incoming: Record<string, any>) {
+  const merged = { ...previous, ...incoming };
+  merged._hr = uniqueHeartRatePoints(previous._hr || [], incoming._hr || []);
+  for (const field of DETAIL_ARRAY_FIELDS) {
+    merged[field] = uniqueEntries(previous[field] || [], incoming[field] || []);
+  }
+  if (previous._segs || incoming._segs) {
+    merged._segs = uniqueEntries(previous._segs || [], incoming._segs || []);
+  }
+  if (previous._resting || incoming._resting) {
+    merged._resting = uniqueEntries(previous._resting || [], incoming._resting || []);
+  }
+  return merged;
+}
+
+export function finalizeHealthDetailDay(day: Record<string, any>) {
+  const result = { ...day };
+  const average = (points: [number, number][], digits = 0) => {
+    const values = points.map((point) => point[1]).filter(Number.isFinite);
+    if (!values.length) return null;
+    const scale = 10 ** digits;
+    return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length * scale) / scale;
+  };
+  const latest = (points: [number, number][]) =>
+    [...points].sort((a, b) => a[0] - b[0]).at(-1)?.[1] ?? null;
+
+  if (result._resting_points?.length) {
+    const values = result._resting_points.map((point: [number, number]) => point[1]).sort((a: number, b: number) => a - b);
+    const middle = Math.floor(values.length / 2);
+    result.resting_hr = Math.round(values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2);
+  }
+  if (result._spo2_points?.length) result.spo2 = average(result._spo2_points);
+  if (result._hrv_points?.length) result.hrv = average(result._hrv_points);
+  if (result._skin_temp_points?.length) result.skin_temp = average(result._skin_temp_points, 1);
+  if (result._weight_points?.length) result.weight = Math.round(latest(result._weight_points) * 10) / 10;
+  if (result._body_fat_points?.length) result.body_fat = Math.round(latest(result._body_fat_points) * 10) / 10;
+
+  if (result._sleep_segments?.length) {
+    result._segs = uniqueEntries(result._segs || [], result._sleep_segments);
+    assignNightAndNaps(result);
+    if (result._sleepFrom != null && result._sleepTo > result._sleepFrom) {
+      result.sleep_start = toIso(result._sleepFrom);
+      result.sleep_end = toIso(result._sleepTo);
+    }
+  }
+  return result;
+}
+
 export function parseHealthDetailRecords(records: unknown): ParsedData | null {
   if (!Array.isArray(records)) return null;
   const days = new Map<string, any>();
@@ -147,9 +230,25 @@ export function parseHealthDetailRecords(records: unknown): ParsedData | null {
     DYNAMIC_HEART_RATE: "dynamic_hr",
     DATA_POINT_NEW_REST_HEARTRATE: "resting_hr",
     RESTING_HEART_RATE: "resting_hr",
+    WEIGHT_BODYFAT_BROAD: "weight_body_fat",
+    BLOOD_OXYGEN_SATURATION: "spo2",
+    HEART_RATE_VARIABILITY: "hrv",
+    SKIN_TEMPERATURE: "skin_temp",
   };
+  const sleepStages: Record<string, string> = {
+    PROFESSIONAL_SLEEP_DREAM: "rem_minutes",
+    PROFESSIONAL_SLEEP_SHALLOW: "light_minutes",
+    PROFESSIONAL_SLEEP_DEEP: "deep_minutes",
+    PROFESSIONAL_SLEEP_NOON: "light_minutes",
+    PROFESSIONAL_SLEEP_WAKE: "awake_minutes",
+  };
+  const hasHuaweiRecords = records.some((record: any) => record && Array.isArray(record.samplePoints));
+  if (!hasHuaweiRecords) return null;
   const getDay = (date: string) => {
-    if (!days.has(date)) days.set(date, { date, _hr: [], _resting: [] });
+    if (!days.has(date)) days.set(date, {
+      date, _hr: [], _resting_points: [], _spo2_points: [], _hrv_points: [],
+      _skin_temp_points: [], _weight_points: [], _body_fat_points: [], _sleep_segments: [],
+    });
     return days.get(date);
   };
 
@@ -159,33 +258,117 @@ export function parseHealthDetailRecords(records: unknown): ParsedData | null {
     for (const point of record.samplePoints) {
       const key = String(point?.key || "");
       const metric = aliases[key];
-      if (!metric) continue;
+      const sleepStage = sleepStages[key];
+      if (!metric && !sleepStage) continue;
       const timestamp = Number(point.startTime ?? record.startTime);
-      const value = Number(point.value);
-      if (!Number.isFinite(timestamp) || !Number.isFinite(value)) continue;
+      if (!Number.isFinite(timestamp)) continue;
+
+      if (sleepStage) {
+        const endTimestamp = Number(point.endTime ?? record.endTime);
+        if (!Number.isFinite(endTimestamp) || endTimestamp <= timestamp) continue;
+        const localStart = timestamp + offset * 60000;
+        const localEnd = endTimestamp + offset * 60000;
+        const from = Math.floor(localStart / 60000);
+        const to = Math.max(from + 1, Math.ceil(localEnd / 60000));
+        const startDate = dayForTimestamp(timestamp, offset);
+        const startHour = new Date(localStart).getUTCHours();
+        const date = startHour >= 18 ? nextDay(startDate) : startDate;
+        const identity = `${sleepStage}|${from}|${to}`;
+        if (seen.has(identity)) continue;
+        seen.add(identity);
+        getDay(date)._sleep_segments.push([from, to, sleepStage, to - from]);
+        continue;
+      }
+
+      const value = parsePointValue(point.value);
       const date = dayForTimestamp(timestamp, offset);
       const day = getDay(date);
-      const identity = `${metric}|${timestamp}|${value}`;
+      const identity = `${metric}|${timestamp}|${JSON.stringify(value)}`;
       if (seen.has(identity)) continue;
       seen.add(identity);
 
-      if (metric === "dynamic_hr" && value >= 30 && value <= 220) {
-        day._hr.push(Math.floor((timestamp + offset * 60000) / 60000), value);
-      } else if (metric === "resting_hr" && value >= 30 && value <= 120) {
-        day._resting.push(value);
+      if (metric === "dynamic_hr") {
+        const bpm = numberFrom(value, "heartRate", "value");
+        if (bpm != null && bpm >= 30 && bpm <= 220) day._hr.push(Math.floor((timestamp + offset * 60000) / 60000), bpm);
+      } else if (metric === "resting_hr") {
+        const bpm = numberFrom(value, "restingHeartRate", "heartRate", "value");
+        if (bpm != null && bpm >= 30 && bpm <= 120) day._resting_points.push([timestamp, bpm]);
+      } else if (metric === "weight_body_fat") {
+        const weight = numberFrom(value, "bodyWeight", "weight");
+        const bodyFat = numberFrom(value, "bodyFatRate", "bodyFat");
+        if (weight != null && weight > 0 && weight <= 500) day._weight_points.push([timestamp, weight]);
+        if (bodyFat != null && bodyFat > 0 && bodyFat <= 100) day._body_fat_points.push([timestamp, bodyFat]);
+      } else if (metric === "spo2") {
+        const saturation = numberFrom(value, "avgSaturation", "spo2", "oxygenSaturation");
+        if (saturation != null && saturation >= 50 && saturation <= 100) day._spo2_points.push([timestamp, saturation]);
+      } else if (metric === "hrv") {
+        const hrv = numberFrom(value, "heartRateVariabilityRMSSD", "hrv");
+        if (hrv != null && hrv > 5 && hrv < 300) day._hrv_points.push([timestamp, hrv]);
+      } else if (metric === "skin_temp") {
+        const temperature = numberFrom(value, "skinTemperature", "skinTemp");
+        if (temperature != null && temperature >= 10 && temperature <= 45) day._skin_temp_points.push([timestamp, temperature]);
       }
     }
   }
 
-  const parsedDays = [...days.values()].map((day) => {
-    if (day._resting.length) {
-      const sorted = day._resting.sort((a: number, b: number) => a - b);
-      const middle = Math.floor(sorted.length / 2);
-      day.resting_hr = Math.round(sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2);
-    }
-    return day;
-  });
-  return parsedDays.length ? { days: parsedDays, workouts: [] } : null;
+  return { days: [...days.values()], workouts: [] };
+}
+
+export function parseHuaweiMotionPathRecords(records: unknown): Record<string, any>[] | null {
+  if (!Array.isArray(records)) return null;
+  const workouts: Record<string, any>[] = [];
+  const seen = new Set<string>();
+  let isMotionPathExport = false;
+
+  for (const record of records) {
+    if (!record || typeof record.summaryData !== "string") continue;
+    let summary: any;
+    try { summary = JSON.parse(record.summaryData); } catch { continue; }
+    if (!summary || typeof summary !== "object" || summary.sportType == null) continue;
+    isMotionPathExport = true;
+
+    const start = Number(record.startTime);
+    const end = Number(record.endTime);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    const offset = timezoneOffsetMinutes(record.timeZone);
+    const startLocal = new Date(start + offset * 60000);
+    const durationMin = Math.round((end - start) / 60000);
+    if (!(durationMin > 0) || durationMin > 1440) continue;
+
+    const identity = `${start}|${end}|${summary.sportType}`;
+    if (seen.has(identity)) continue;
+    seen.add(identity);
+
+    const numeric = (value: unknown) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    const heartRate = (value: unknown) => {
+      const parsed = numeric(value);
+      return parsed != null && parsed >= 30 && parsed <= 220 ? Math.round(parsed) : null;
+    };
+    const meters = numeric(summary.totalDistance);
+    const calories = numeric(summary.totalCalories);
+
+    workouts.push({
+      date: dayForTimestamp(start, offset),
+      start_time: `${pad(startLocal.getUTCHours())}:${pad(startLocal.getUTCMinutes())}`,
+      activity: "Workout",
+      sport_type: numeric(summary.sportType),
+      duration_min: durationMin,
+      calories: calories != null && calories > 0 ? Math.round(calories / 10) / 100 : null,
+      avg_hr: heartRate(summary.avgHeartRate),
+      max_hr: heartRate(summary.maxHeartRate),
+      min_hr: heartRate(summary.minHeartRate),
+      distance_km: meters != null && meters > 0 ? Math.round(meters / 10) / 100 : null,
+      steps: numeric(summary.totalSteps),
+      is_outdoor: summary.hasTrackPoint === true,
+      source: "huawei_motion_path",
+      method: "device_summary",
+    });
+  }
+
+  return isMotionPathExport ? workouts : null;
 }
 
 // Accepts a full local timestamp, or a bare clock time which is anchored to `date`.

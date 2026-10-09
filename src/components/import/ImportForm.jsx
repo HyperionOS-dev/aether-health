@@ -49,7 +49,7 @@ export default function ImportForm() {
       <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
         <li>In Huawei Health, go to Me → Privacy center → Request your data.</li>
         <li>Download and unzip the file Huawei sends you.</li>
-        <li>Upload Huawei metric CSVs, ZIPs of CSVs, or official Health detail JSON files containing heart-rate data.</li>
+        <li>Upload Huawei metric CSVs, ZIPs, or official Health detail JSON files. You can select the whole detail-data folder in batches.</li>
       </ol>
       <label
         onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
@@ -59,7 +59,7 @@ export default function ImportForm() {
       >
         <Upload className={`h-6 w-6 ${dragging ? "text-sleep" : "text-muted-foreground"}`} />
         <span className="text-sm font-medium">{dragging ? "Drop your files here" : "Choose or drag export files"}</span>
-        <span className="text-xs text-muted-foreground">CSV, JSON or ZIP; multiple allowed</span>
+        <span className="text-xs text-muted-foreground">CSV, JSON or ZIP; up to 60 files per batch</span>
         <input
           type="file"
           accept=".json,.csv,.zip"

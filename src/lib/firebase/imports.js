@@ -1,12 +1,21 @@
 import { buildDays } from "@/lib/importers/gadgetbridge/days";
 import { readZip, singleTable } from "@/lib/importers/gadgetbridge/tables";
 import { buildWorkouts, sessionSpans } from "@/lib/importers/gadgetbridge/workouts";
-import { finalizeDay, parseHealthDetailRecords, parseMetricsCsv, sessionWindows } from "@/lib/importers/huawei/parse";
+import {
+  finalizeDay,
+  finalizeHealthDetailDay,
+  mergeHuaweiDays,
+  parseHealthDetailRecords,
+  parseMetricsCsv,
+  parseHuaweiMotionPathRecords,
+  sessionWindows,
+} from "@/lib/importers/huawei/parse";
 import { entities } from "@/lib/firebase/entities";
 import { recomputeScores } from "@/lib/scoring/recompute";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_DAYS = 400;
+const MAX_HUAWEI_FILES = 60;
 const MAX_GADGETBRIDGE_FILES = 4;
 const MAX_FILE_BYTES = 120_000_000;
 
@@ -49,7 +58,8 @@ async function saveImport({ label, days, workouts, message, extraLog = {} }) {
   if (createDays.length) await entities.DailyMetric.bulkCreate(createDays);
   if (updateDays.length) await entities.DailyMetric.bulkUpdate(updateDays);
   if (createWorkouts.length) await entities.Workout.bulkCreate(createWorkouts);
-  const touchedDates = days.map((day) => day.date).filter((date) => DATE.test(String(date)));
+  const touchedDates = [...days.map((day) => day.date), ...workouts.map((workout) => workout.date)]
+    .filter((date) => DATE.test(String(date)));
   await recomputeScores({ entities }, touchedDates);
   await entities.ImportLog.create({
     file_name: label,
@@ -69,19 +79,35 @@ async function readHuaweiFile(file) {
     if (Array.isArray(parsed)) {
       const detailData = parseHealthDetailRecords(parsed);
       if (detailData) return detailData;
+      const workouts = parseHuaweiMotionPathRecords(parsed);
+      if (workouts) return { days: [], workouts };
+      return { days: [], workouts: [] };
     }
     if (parsed && Array.isArray(parsed.days)) {
       return { days: parsed.days, workouts: Array.isArray(parsed.workouts) ? parsed.workouts : [] };
     }
-    throw new Error(`${file.name} is not a supported Huawei health-data JSON file`);
+    return { days: [], workouts: [] };
   }
   if (lowerName.endsWith(".zip")) {
     const tables = await readZip(new Uint8Array(await file.arrayBuffer()));
     const days = [];
     const workouts = [];
-    for (const csv of Object.values(tables)) {
-      const parsed = parseMetricsCsv(csv);
-      if (parsed) { days.push(...parsed.days); workouts.push(...parsed.workouts); }
+    for (const content of Object.values(tables)) {
+      const trimmed = content.trimStart();
+      if (trimmed.startsWith("[")) {
+        const records = JSON.parse(content);
+        const detail = parseHealthDetailRecords(records);
+        const motion = parseHuaweiMotionPathRecords(records);
+        if (detail) days.push(...detail.days);
+        if (motion) workouts.push(...motion);
+      } else if (trimmed.startsWith("{")) {
+        const parsed = JSON.parse(content);
+        if (Array.isArray(parsed.days)) days.push(...parsed.days);
+        if (Array.isArray(parsed.workouts)) workouts.push(...parsed.workouts);
+      } else {
+        const parsed = parseMetricsCsv(content);
+        if (parsed) { days.push(...parsed.days); workouts.push(...parsed.workouts); }
+      }
     }
     return { days, workouts };
   }
@@ -90,7 +116,7 @@ async function readHuaweiFile(file) {
 }
 
 export async function importHuaweiFiles(files) {
-  if (!files.length || files.length > 20) throw new Error("Choose between 1 and 20 files at a time");
+  if (!files.length || files.length > MAX_HUAWEI_FILES) throw new Error(`Choose between 1 and ${MAX_HUAWEI_FILES} files at a time`);
   validateFiles(files);
   const byDate = new Map();
   const rawWorkouts = [];
@@ -102,7 +128,7 @@ export async function importHuaweiFiles(files) {
       if (!day || !DATE.test(String(day.date))) continue;
       accepted++;
       const previous = byDate.get(day.date);
-      byDate.set(day.date, previous ? { ...previous, ...day, _hr: [...(previous._hr || []), ...(day._hr || [])] } : day);
+      byDate.set(day.date, previous ? mergeHuaweiDays(previous, day) : day);
     }
     rawWorkouts.push(...(parsed.workouts || []));
     perFile.push({ name: file.name, days: accepted, workouts: (parsed.workouts || []).length });
@@ -111,9 +137,10 @@ export async function importHuaweiFiles(files) {
   const incoming = [...byDate.values()]
     .sort((a, b) => String(a.date).localeCompare(String(b.date)))
     .slice(-MAX_DAYS)
+    .map(finalizeHealthDetailDay)
     .map((day) => finalizeDay(day, spans.get(day.date) || []))
     .filter(Boolean);
-  if (!incoming.length && !rawWorkouts.length) throw new Error("No readable health records found. Huawei CSV files must contain supported metric columns.");
+  if (!incoming.length && !rawWorkouts.length) throw new Error("No supported health records were found in these Huawei files.");
   const result = await saveImport({
     label: files.map((file) => file.name).join(", ").slice(0, 120),
     days: incoming,
