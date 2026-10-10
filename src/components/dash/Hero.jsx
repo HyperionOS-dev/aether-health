@@ -3,7 +3,7 @@ import DualDial from "./DualDial";
 import ScoreRing from "./ScoreRing";
 import InsightCard from "./InsightCard";
 import MetricTile from "./MetricTile";
-import { COLORS, recoveryTone, avg, fmtHours } from "@/lib/metrics";
+import { COLORS, avg, fmtHours } from "@/lib/metrics";
 
 export default function Hero({ day, history }) {
   const week = history.slice(-8, -1);
@@ -17,8 +17,6 @@ export default function Hero({ day, history }) {
         <Card className="flex justify-around py-6">
           <ScoreRing label="Sleep" value={day?.sleep_performance} max={100} color={COLORS.sleep}
             display={day?.sleep_performance != null ? `${day.sleep_performance}%` : "--"} />
-          <ScoreRing label="Recovery" value={day?.recovery} max={100} color={recoveryTone(day?.recovery).color}
-            display={day?.recovery != null ? `${day.recovery}%` : "--"} />
           <ScoreRing label="Strain" value={day?.strain} max={21} color={COLORS.strain} display={day?.strain ?? "--"} />
         </Card>
         <InsightCard day={day} />

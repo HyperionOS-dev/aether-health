@@ -2,6 +2,7 @@
 // same every load, generated entirely in the browser — never written to any entity,
 // localStorage snapshot, or the daily bio-age snapshot. Shapes match DailyMetric /
 // Workout records so the heatmap and Biological Age card consume them unchanged.
+import { computeScores } from "@/lib/scoring/scores";
 
 const SEED = 1337;
 const round1 = (v) => Math.round(v * 10) / 10;
@@ -72,6 +73,8 @@ export function getDemoData(mode) {
         date,
         activity: "Badminton",
         start_time: "18:30",
+        ended_at: new Date(`${date}T19:30:00`).toISOString(),
+        recovery_time_min: 540,
         duration_min: 60,
         avg_hr: 145,
         max_hr: 176,
@@ -108,6 +111,8 @@ export function getDemoData(mode) {
       strain,
       sleep_hours: round1(sh),
       sleep_minutes: Math.round(sh * 60),
+      sleep_start: `${date}T23:00`,
+      sleep_end: `${date}T07:00`,
       deep_minutes: Math.round(sh * 60 * 0.2),
       light_minutes: Math.round(sh * 60 * 0.5),
       rem_minutes: Math.round(sh * 60 * 0.25),
@@ -133,5 +138,6 @@ export function getDemoData(mode) {
       source: "demo",
     });
   }
-  return { metrics, workouts, logs: [] };
+  const scored = computeScores(metrics, workouts, metrics.map((metric) => metric.date));
+  return { metrics: metrics.map((metric) => ({ ...metric, ...scored.get(metric.date) })), workouts, logs: [] };
 }

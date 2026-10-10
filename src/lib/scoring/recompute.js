@@ -1,7 +1,8 @@
 // Refresh the trailing 60-day window plus requested dates against an `{ entities }` store.
 import { computeScores } from "@/lib/scoring/scores";
+import { SCORING_CONFIG } from "@/lib/scoring/config";
 
-const WINDOW = 60;
+const WINDOW = SCORING_CONFIG.recoveryV6.personalWindowDays;
 
 export async function recomputeScores(store, dates = []) {
   const days = await store.entities.DailyMetric.filter({}, "-date", 2000);

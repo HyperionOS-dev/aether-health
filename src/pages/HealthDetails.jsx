@@ -14,6 +14,7 @@ import SyncFab from "@/components/dash/SyncFab";
 import ImportPanel from "@/components/import/ImportPanel";
 import LogWorkoutDialog from "@/components/workout/LogWorkoutDialog";
 import BioAgeCard from "@/components/bioage/BioAgeCard";
+import { localDateTimeToEpoch, recoveryAtTime } from "@/lib/scoring/scores";
 
 export default function HealthDetails() {
   const { data, isLoading } = useHealthData();
@@ -22,6 +23,11 @@ export default function HealthDetails() {
   const [params, setParams] = useSearchParams();
   const [segment, setSegment] = useState("strain");
   const [open, setOpen] = useState(false);
+  const [clock, setClock] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setClock(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
   useEffect(() => {
     document.title = "Home · Aether";
   }, []);
@@ -30,14 +36,28 @@ export default function HealthDetails() {
   const latest = metrics.at(-1)?.date || todayStr();
   const current = params.get("date") || latest;
   const setDate = (d) => setParams(d && d !== latest ? { date: d } : {});
-  const day = metrics.find((m) => m.date === current);
+  const selectedDay = metrics.find((m) => m.date === current);
+  /** @type {any[]} */
+  const allWorkouts = data?.workouts || [];
   const history = metrics.filter((m) => m.date <= current).slice(-14);
-  const workouts = (data?.workouts || []).filter((w) => w.date === current);
+  const today = todayStr();
+  const latestNight = [...metrics].reverse().find((m) => m.date <= today && m.sleep_end && Number.isFinite(m.recovery_components?.zc));
+  const todayRecord = metrics.find((m) => m.date === today);
+  const currentRecovery = current === today
+    ? recoveryAtTime(allWorkouts, latestNight?.recovery_components?.zc ?? null, clock, todayRecord?.recovery_components?.personal_speed ?? 1, todayRecord?.strain_sampled_at ? localDateTimeToEpoch(todayRecord.strain_sampled_at, todayRecord.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone) : null)
+    : null;
+  const provisional = current === today && !todayRecord?.sleep_end;
+  const day = selectedDay || (current === today ? { date: today } : null);
+  const displayedDay = currentRecovery
+    ? { ...day, ...currentRecovery, recovery_provisional: provisional,
+      recovery_components: provisional && latestNight?.recovery_components ? latestNight.recovery_components : todayRecord?.recovery_components || day?.recovery_components }
+    : day;
+  const workouts = allWorkouts.filter((w) => w.date === current);
   const lastLog = data?.logs?.[0];
 
   const cards = {
     strain: <StrainCard key="strain" day={day} workouts={workouts} />,
-    recovery: <RecoveryCard key="recovery" day={day} history={history} />,
+    recovery: <RecoveryCard key="recovery" day={displayedDay} history={metrics} />,
     sleep: <SleepCard key="sleep" day={day} />,
   };
 
@@ -58,10 +78,10 @@ export default function HealthDetails() {
           <>
             {!day && (
               <p className="rounded-2xl border border-hairline bg-card p-4 text-sm text-muted-foreground">
-                No Huawei Health data for this day yet.
+                No health data for this day yet.
               </p>
             )}
-            <Hero day={day} history={history} />
+            <Hero day={displayedDay} history={history} />
             {isMobile ? (
               <div className="space-y-4">
                 <SegmentPills value={segment} onChange={setSegment} />

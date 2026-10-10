@@ -1,7 +1,7 @@
 import Label from "./Label";
 import { COLORS } from "@/lib/metrics";
 
-export default function ScoreRing({ value, max, color, label, display }) {
+export default function ScoreRing({ value, max, color, label, display, detail = null }) {
   const r = 44;
   const c = 2 * Math.PI * r;
   const pct = value == null ? 0 : Math.min(value / max, 1);
@@ -20,6 +20,7 @@ export default function ScoreRing({ value, max, color, label, display }) {
           {display}
         </div>
       </div>
+      {detail && <span className="max-w-28 text-center text-[10px] leading-tight text-muted-foreground">{detail}</span>}
       <Label className="text-foreground">{label}</Label>
     </div>
   );

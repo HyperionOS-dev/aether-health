@@ -20,7 +20,7 @@
 
 import { strainFromMet, strainFromZones, zoneForHr, zoneLoad } from "@/lib/scoring/scores";
 import { activityLabel, isOutdoor } from "./sports.ts";
-import { col, localClock, localDate, localMinutes, metric, num, saneHeartRate, tableOf } from "./tables.ts";
+import { col, localClock, localDate, localMinutes, metric, num, saneHeartRate, tableOf, timestampMs } from "./tables.ts";
 
 const GAP_CAP_MIN = 5; // a wider gap carries no zone credit — the watch was not recording
 const COVERAGE_MIN = 0.5; // FIX 9 method 1: half the samples must survive the sanity band
@@ -108,17 +108,20 @@ export function sessionSpans(tables: Record<string, string>, timezone: string, f
   const summary = tableOf(tables, "HUAWEI_WORKOUT_SUMMARY_SAMPLE");
   if (!summary) return spans;
   const iStart = col(summary.headers, "starttimestamp");
+  const iEnd = col(summary.headers, "endtimestamp");
   const iDur = col(summary.headers, "duration");
   const iTotal = col(summary.headers, "totaltime");
   for (const row of summary.rows) {
-    const ms = Date.parse(row[iStart] ?? "");
+    const ms = timestampMs(row[iStart]);
     if (!Number.isFinite(ms)) continue;
     const minutes = Math.round(((metric(row, iDur) ?? metric(row, iTotal)) ?? 0) / 60);
     if (minutes <= 0) continue;
     const from = localMinutes(ms, timezone, fallbackOffset);
     const date = localDate(from);
+    const endMs = timestampMs(row[iEnd]);
+    const to = Number.isFinite(endMs) ? localMinutes(endMs, timezone, fallbackOffset) : from + minutes;
     if (!spans.has(date)) spans.set(date, []);
-    spans.get(date)!.push({ from, to: from + minutes });
+    spans.get(date)!.push({ from, to });
   }
   return spans;
 }
@@ -155,10 +158,11 @@ export function buildWorkouts(tables: Record<string, string>, timezone: string, 
   const streams = buildStreams(tableOf(tables, "HUAWEI_WORKOUT_DATA_SAMPLE"), timezone, fallbackOffset);
 
   const i = (name: string) => col(summary.headers, name);
-  const [iId, iType, iStart, iDur, iTotal, iCal, iDist, iSteps, iLoad, iAer, iAna, iMaxPeak, iMinPeak, iGpx, iRawGps] = [
-    i("workoutid"), i("type"), i("starttimestamp"), i("duration"), i("totaltime"), i("calories"),
+  const [iId, iType, iStart, iEnd, iDur, iTotal, iCal, iDist, iSteps, iLoad, iAer, iAna, iMaxPeak, iMinPeak, iGpx, iRawGps, iRecoveryTime] = [
+    i("workoutid"), i("type"), i("starttimestamp"), i("endtimestamp"), i("duration"), i("totaltime"), i("calories"),
     i("distance"), i("stepcount"), i("workoutload"), i("workoutaerobiceffect"), i("workoutanaerobiceffect"),
     i("maxheartratepeak"), i("minheartratepeak"), i("gpxfilelocation"), i("rawgpsfilelocation"),
+    i("recoverytime"),
   ];
 
   const records: Record<string, any>[] = [];
@@ -166,7 +170,7 @@ export function buildWorkouts(tables: Record<string, string>, timezone: string, 
 
   for (const row of summary.rows) {
     const id = String(row[iId] ?? "");
-    const startMs = Date.parse(row[iStart] ?? "");
+    const startMs = timestampMs(row[iStart]);
     if (!id || !Number.isFinite(startMs)) continue;
 
     const local = localMinutes(startMs, timezone, fallbackOffset);
@@ -200,6 +204,12 @@ export function buildWorkouts(tables: Record<string, string>, timezone: string, 
       date,
       activity: activityLabel(num(row, iType)),
       start_time: localClock(local),
+      end_time: Number.isFinite(timestampMs(row[iEnd]))
+        ? localClock(localMinutes(timestampMs(row[iEnd]), timezone, fallbackOffset))
+        : null,
+      ended_at: Number.isFinite(timestampMs(row[iEnd])) ? new Date(timestampMs(row[iEnd])).toISOString() : null,
+      recovery_time_min: metric(row, iRecoveryTime),
+      timezone,
       duration_min: durationMin,
       calories: metric(row, iCal),
       avg_hr: avgHr,

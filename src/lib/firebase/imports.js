@@ -24,7 +24,7 @@ const MAX_BATCH_BYTES = 240_000_000;
 const MAX_ZIP_EXPANDED_BYTES = 256_000_000;
 
 const clean = (record) => Object.fromEntries(
-  Object.entries(record).filter(([key, value]) => !key.startsWith("_") && value !== null && value !== undefined && value !== "")
+  Object.entries(record).filter(([key, value]) => !key.startsWith("_") && (value !== null || key === "hrv" || key === "resting_hr") && value !== undefined && value !== "")
 );
 
 function validateFiles(files) {
@@ -54,17 +54,28 @@ async function saveImport({ days, workouts, message, extraLog = {} }) {
 
   const existingWorkouts = await entities.Workout.filter({}, "-date", 2000);
   const workoutKey = (workout) => `${workout.date}|${workout.start_time || ""}|${String(workout.activity || "").toLowerCase()}`;
-  const seenWorkouts = new Set(existingWorkouts.map(workoutKey));
+  const knownWorkouts = new Map(existingWorkouts.map((workout) => [workoutKey(workout), workout]));
+  const seenWorkouts = new Set();
   const createWorkouts = [];
+  const updateWorkouts = [];
   for (const workout of workouts) {
-    if (!DATE.test(String(workout.date)) || !workout.activity || seenWorkouts.has(workoutKey(workout))) continue;
-    seenWorkouts.add(workoutKey(workout));
-    createWorkouts.push(clean(workout));
+    if (!DATE.test(String(workout.date)) || !workout.activity) continue;
+    const key = workoutKey(workout);
+    if (seenWorkouts.has(key)) continue;
+    seenWorkouts.add(key);
+    const data = clean(workout);
+    const previous = knownWorkouts.get(key);
+    if (previous) {
+      if (data.ended_at || data.recovery_time_min != null) updateWorkouts.push({ id: previous.id, ...data });
+    } else {
+      createWorkouts.push(data);
+    }
   }
 
   if (createDays.length) await entities.DailyMetric.bulkCreate(createDays);
   if (updateDays.length) await entities.DailyMetric.bulkUpdate(updateDays);
   if (createWorkouts.length) await entities.Workout.bulkCreate(createWorkouts);
+  if (updateWorkouts.length) await entities.Workout.bulkUpdate(updateWorkouts);
   const touchedDates = [...days.map((day) => day.date), ...workouts.map((workout) => workout.date)]
     .filter((date) => DATE.test(String(date)));
   await recomputeScores({ entities }, touchedDates);

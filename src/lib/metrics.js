@@ -1,4 +1,5 @@
 import { format, parseISO, differenceInCalendarDays } from "date-fns";
+import { SCORING_CONFIG } from "@/lib/scoring/config";
 
 // SVG/chart strokes need literal colors (they mirror the CSS tokens)
 export const COLORS = {
@@ -15,9 +16,9 @@ const r1 = (v) => Math.round(v * 10) / 10;
 
 export function recoveryTone(v) {
   if (v == null) return { label: "No data", color: COLORS.muted };
-  if (v >= 67) return { label: "Green", color: COLORS.recovery };
-  if (v >= 34) return { label: "Yellow", color: COLORS.caution };
-  return { label: "Red", color: COLORS.danger };
+  if (v >= SCORING_CONFIG.recoveryV6.greenAt) return { label: "Recovered", color: COLORS.recovery };
+  if (v >= SCORING_CONFIG.recoveryV6.yellowAt) return { label: "Recovering", color: COLORS.caution };
+  return { label: "Needs rest", color: COLORS.danger };
 }
 
 export function strainTarget(r) {
@@ -28,11 +29,10 @@ export function strainTarget(r) {
 
 export function insight(day) {
   const r = day?.recovery;
-  if (r == null) return { title: "Awaiting data", body: "Import Huawei Health data with HRV or resting heart rate to calculate your Recovery." };
-  const t = strainTarget(r);
-  if (r >= 67) return { title: "Optimal Health", body: `Take advantage of your green Recovery by meeting your Strain target of ${t}. Your body is signaling it can take on significant exertion today.` };
-  if (r >= 34) return { title: "Maintain", body: `Your Recovery is in the yellow. Aim for a moderate Strain target of ${t} and prioritize quality sleep tonight.` };
-  return { title: "Rest & Recover", body: `Your body is under stress. Keep Strain under ${t} with active recovery, hydration and an early bedtime.` };
+  if (r == null) return { title: "Awaiting data", body: "Import health data to calculate your current Recovery." };
+  if (r >= 85) return { title: "Recovered", body: "Your current recovery is high. Workout debt and body signals are both within the recovered range." };
+  if (r >= 60) return { title: "Building back", body: "Your recovery is moving upward. Rest and a normal night of sleep are included in the estimate." };
+  return { title: "Recovery in progress", body: "Workout debt or body signals are still lowering your current recovery." };
 }
 
 export function avg(rows, key) {

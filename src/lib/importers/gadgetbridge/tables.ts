@@ -12,6 +12,13 @@ const MAX_ZIP_EXPANDED_BYTES = 256_000_000;
 
 export type Table = { headers: string[]; rows: string[][] };
 
+export function timestampMs(value: unknown): number {
+  const raw = String(value ?? "").trim();
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw)) return Date.parse(raw);
+  const epoch = Number(raw);
+  return Number.isFinite(epoch) && Math.abs(epoch) >= 100_000_000_000 ? epoch : NaN;
+}
+
 // This dump's missing-value sentinel, present in every metric column.
 export const MISSING = -1;
 

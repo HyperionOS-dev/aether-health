@@ -23,6 +23,7 @@ export const firebaseBackend = {
       date,
       activity,
       duration_min: minutes,
+      ended_at: new Date().toISOString(),
       calories: kcalBurn(met, minutes, weight),
       strain: strainFromMet(minutes, met),
     });

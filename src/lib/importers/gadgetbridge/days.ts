@@ -11,32 +11,30 @@
 // of the night's duration entirely — it is counted only as unknown minutes.
 
 import { zoneForHr } from "@/lib/scoring/scores";
-import { col, localClock, localDate, localIso, localMinutes, metric, saneHeartRate, tableOf } from "./tables.ts";
+import { SCORING_CONFIG } from "@/lib/scoring/config";
+import { col, localClock, localDate, localIso, localMinutes, metric, saneHeartRate, tableOf, timestampMs } from "./tables.ts";
 
 const SOURCE = "gadgetbridge_import";
 const NAP_GAP_MIN = 90; // wider than this separates a nap from the night
 const GAP_CAP_MIN = 5; // a wider gap carries no zone credit
 const COVER_SPAN_MIN = 360; // estimated wear needed before the day's trace is trusted
 const COVER_MIN_READINGS = 60;
-const MIN_POOL = 10; // readings needed before the fallback resting-HR band is used
 const STAGE_FIELDS: Record<string, string> = { "1": "light_minutes", "2": "rem_minutes", "3": "deep_minutes", "4": "awake_minutes" };
 const UNKNOWN_STAGE = "5";
 
 type Session = { from: number; to: number; minutes: Record<string, number> };
 
 const round1 = (v: number) => Math.round(v * 10) / 10;
+const percentile = (values: number[], p: number) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const position = (sorted.length - 1) * p;
+  const low = Math.floor(position);
+  const high = Math.ceil(position);
+  return sorted[low] + (sorted[high] - sorted[low]) * (position - low);
+};
 
 // Mean of the values between two percentile positions: steadier than one percentile
 // value, far less exposed to a few artifacts than the mean of a bottom bucket.
-function band(values: number[], lo: number, hi: number): number {
-  const sorted = [...values].sort((a, b) => a - b);
-  const from = Math.min(sorted.length - 1, Math.floor(sorted.length * lo));
-  const to = Math.max(from, Math.min(sorted.length - 1, Math.round(sorted.length * hi) - 1));
-  let sum = 0;
-  for (let i = from; i <= to; i++) sum += sorted[i];
-  return Math.round(sum / (to - from + 1));
-}
-
 // Standard median: with an even count the two middle samples are averaged, so one
 // higher reading cannot stand in for the day's resting value.
 const median = (values: number[]) => {
@@ -52,8 +50,10 @@ export function buildDays(
   sessionSpans: Map<string, { from: number; to: number }[]> = new Map(),
 ): Record<string, any>[] {
   const days = new Map<string, Record<string, any>>();
+  const heartRateSamples: [number, number][] = [];
+  const hrvSamplePoints: [number, number][] = [];
   const get = (date: string) => {
-    if (!days.has(date)) days.set(date, { date, sources: {} });
+    if (!days.has(date)) days.set(date, { date, sources: {}, timezone });
     return days.get(date)!;
   };
 
@@ -67,13 +67,16 @@ export function buildDays(
     const iSpo = col(act.headers, "spo");
     const iRhr = col(act.headers, "restingheartrate");
     for (const row of act.rows) {
-      const ms = Date.parse(row[iTs] ?? "");
+      const ms = timestampMs(row[iTs]);
       if (!Number.isFinite(ms)) continue;
       const local = localMinutes(ms, timezone, fallbackOffset);
       const day = get(localDate(local));
 
       const hr = saneHeartRate(Number(row[iHr]));
-      if (hr != null) (day._hr ||= []).push([local, hr]);
+      if (hr != null) {
+        (day._hr ||= []).push([local, hr]);
+        heartRateSamples.push([local, hr]);
+      }
 
       const steps = metric(row, iSteps);
       if (steps != null && steps > 0) day._steps = (day._steps || 0) + steps;
@@ -98,7 +101,7 @@ export function buildDays(
     const iStage = col(stage.headers, "stage");
     const rows: { t: number; code: string }[] = [];
     for (const row of stage.rows) {
-      const ms = Date.parse(row[iTs] ?? "");
+      const ms = timestampMs(row[iTs]);
       const code = String(row[iStage] ?? "").trim();
       if (!Number.isFinite(ms) || !code) continue;
       rows.push({ t: localMinutes(ms, timezone, fallbackOffset), code });
@@ -146,18 +149,17 @@ export function buildDays(
     }
   }
 
-  // --- Huawei spot HRV readings, summarized by the user's local day
+  // --- Huawei spot HRV readings, retained with timestamps for sleep-window matching
   const hrvSamples = tableOf(tables, "HUAWEI_HRV_VALUE_SAMPLE");
   if (hrvSamples) {
     const iTs = col(hrvSamples.headers, "timestamp");
     const iValue = col(hrvSamples.headers, "value");
     for (const row of hrvSamples.rows) {
-      const ms = Date.parse(row[iTs] ?? "");
+      const ms = timestampMs(row[iTs]);
       if (!Number.isFinite(ms)) continue;
       const value = metric(row, iValue);
       if (value == null || value <= 5 || value >= 300) continue;
-      const day = get(localDate(localMinutes(ms, timezone, fallbackOffset)));
-      (day._hrvSamples ||= []).push(value);
+      hrvSamplePoints.push([localMinutes(ms, timezone, fallbackOffset), value]);
     }
   }
 
@@ -165,26 +167,17 @@ export function buildDays(
   const stats = tableOf(tables, "HUAWEI_SLEEP_STATS_SAMPLE");
   if (stats) {
     const iRise = col(stats.headers, "risingtime");
-    const iHrv = col(stats.headers, "avghrv");
     const iO2 = col(stats.headers, "avgoxygensaturation");
-    const iAvgHr = col(stats.headers, "avgheartrate");
     for (const row of stats.rows) {
       const ms = Date.parse(row[iRise] ?? "");
       if (!Number.isFinite(ms)) continue;
       const day = get(localDate(localMinutes(ms, timezone, fallbackOffset)));
 
-      const hrv = metric(row, iHrv);
-      if (hrv != null && hrv > 5 && hrv < 300 && day.hrv == null) {
-        day.hrv = Math.round(hrv);
-        day.sources.hrv = "sleep_stats";
-      }
       const o2 = metric(row, iO2);
       if (o2 != null && o2 >= 50 && o2 <= 100 && day.spo2 == null) {
         day.spo2 = Math.round(o2);
         day.sources.spo2 = "sleep_stats";
       }
-      const avgHr = metric(row, iAvgHr);
-      if (avgHr != null && avgHr >= 30 && avgHr <= 220) day._sleepAvgHr = avgHr;
     }
   }
 
@@ -195,7 +188,7 @@ export function buildDays(
     const iVal = col(temp.headers, "temperature");
     const iType = col(temp.headers, "temperaturetype");
     for (const row of temp.rows) {
-      const ms = Date.parse(row[iTs] ?? "");
+      const ms = timestampMs(row[iTs]);
       if (!Number.isFinite(ms)) continue;
       const type = metric(row, iType);
       if (type != null && type !== 2) continue; // 2 is the skin reading
@@ -208,27 +201,42 @@ export function buildDays(
 
   // --- finalize each day: resting heart rate, zones, and the rest of the scalars
   const out: Record<string, any>[] = [];
+  const recoveryConfig = SCORING_CONFIG.recoveryV5;
   for (const day of days.values()) {
     const points = (day._hr || []) as [number, number][];
+    if (points.length) day.strain_sampled_at = localIso(Math.max(...points.map(([time]) => time)));
+    const sleepStart = day.sleep_start ? Date.parse(`${day.sleep_start}:00Z`) / 60000 : NaN;
+    const sleepEnd = day.sleep_end ? Date.parse(`${day.sleep_end}:00Z`) / 60000 : NaN;
+    const hasSleepWindow = Number.isFinite(sleepStart) && Number.isFinite(sleepEnd) && sleepEnd > sleepStart;
+
+    if (hasSleepWindow) {
+      const overnightHrv = hrvSamplePoints
+        .filter(([time]) => time >= sleepStart && time <= sleepEnd)
+        .map(([, value]) => value);
+      day.hrv_samples_count = overnightHrv.length;
+      if (overnightHrv.length >= recoveryConfig.minHrvSamples) {
+        day.hrv = Math.round(median(overnightHrv));
+        day.sources.hrv = "overnight_samples";
+      }
+    }
 
     // Resting heart rate, best source first: the watch's own resting value for the day,
     // then the same bottom-band derivation the CSV path uses, then the night's average.
     // Measured on one shared day: device 58, trace band 56, night average 62 — the night
     // average is a sleep-window mean, not a resting floor, so it is the last resort and
     // whichever source was used is recorded on the record.
-    if (day._deviceRhr?.length) {
+    const overnightHr = hasSleepWindow
+      ? heartRateSamples
+        .filter(([time, value]) => time >= sleepStart && time <= sleepEnd && value >= recoveryConfig.minRhr && value <= recoveryConfig.maxRhr)
+        .map(([, value]) => value)
+      : [];
+    day.rhr_samples_count = overnightHr.length;
+    if (overnightHr.length >= recoveryConfig.minRhrSamples) {
+      day.resting_hr = Math.round(percentile(overnightHr, 0.05));
+      day.sources.resting_hr = "overnight_hr_p05";
+    } else if (day._deviceRhr?.length) {
       day.resting_hr = median(day._deviceRhr);
       day.sources.resting_hr = "device_resting_hr";
-    } else if (points.length >= MIN_POOL) {
-      const plausible = points.map(([, v]) => v).filter((v) => v > 30 && v <= 120);
-      if (plausible.length >= MIN_POOL) {
-        day.resting_hr = band(plausible, 0.02, 0.08);
-        day.sources.resting_hr = "hr_trace";
-      }
-    }
-    if (day.resting_hr == null && day._sleepAvgHr != null) {
-      day.resting_hr = Math.round(day._sleepAvgHr);
-      day.sources.resting_hr = "sleep_stats_avg";
     }
 
     if (day.resting_hr != null && points.length) {

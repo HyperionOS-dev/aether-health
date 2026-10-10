@@ -1,35 +1,12 @@
-// Health scoring model (aether-scores-v4).
+// Health scoring model; every tunable constant lives in config.js.
+import { SCORING_CONFIG } from "./config.js";
 
-export const ALGO_VERSION = "aether-scores-v4";
-export const MAX_HR = 190;
-export const ZONE_EDGES = [0.25, 0.45, 0.6, 0.75, 0.88];
-const ZONE_MULT = [0.4, 1, 1.8, 2.8, 4];
-const LOAD_DIVISOR = 120;
-
-const BASELINE_WINDOW = 30;
-const DEFAULT_HRV = 45;
-const DEFAULT_RHR = 62;
-const DEFAULT_HRV_SD = 12;
-const DEFAULT_RHR_SD = 4;
-const MIN_HRV_SD = 5;
-const MIN_RHR_SD = 2;
-
-const RECOVERY_NEUTRAL = 58;
-const W_HRV_Z = 10;
-const W_RHR_Z = 8;
-const W_SLEEP = 0.4;
-
-const RATE_MIN = -10;
-const RATE_MAX = 25;
-const RATE_MAX_GAP_H = 36;
-const RATE_MIN_PAIRS = 5;
-const RATE_FULL_PAIRS = 20;
-const RATE_WINDOW = 60;
-const REST_STRAIN = 10;
-const RECOVERY_CEILING = 90;
-
-const CONSISTENCY_K = 0.25;
-const CONSISTENCY_NIGHTS = 7;
+export const ALGO_VERSION = SCORING_CONFIG.algorithmVersion;
+export const MAX_HR = SCORING_CONFIG.strain.maxHr;
+export const ZONE_EDGES = SCORING_CONFIG.strain.zoneEdges;
+const ZONE_MULT = SCORING_CONFIG.strain.zoneMultipliers;
+const LOAD_DIVISOR = SCORING_CONFIG.strain.loadDivisor;
+const DEFAULT_RHR = SCORING_CONFIG.strain.defaultRhr;
 
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -40,6 +17,15 @@ const sd = (a) => {
   if (a.length < 2) return 0;
   const m = mean(a);
   return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / (a.length - 1));
+};
+const median = (values) => quantile(values, 0.5);
+const quantile = (values, p) => {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const position = (sorted.length - 1) * clamp(p, 0, 1);
+  const low = Math.floor(position);
+  const high = Math.ceil(position);
+  return sorted[low] + (sorted[high] - sorted[low]) * (position - low);
 };
 
 const strainFromLoad = (load) => r1(21 * (1 - Math.exp(-Math.max(0, load) / LOAD_DIVISOR)));
@@ -95,55 +81,179 @@ function dayStrain(d, workouts, rhr) {
   return strainFromLoad(sessions + (d.steps || 0) / 500);
 }
 
-export function baselineAsOf(history, date) {
-  const win = history.filter((d) => d.date < date).slice(-BASELINE_WINDOW);
-  const confidence = Math.min(1, win.length / BASELINE_WINDOW);
-  const blend = (personal, fallback) => (isNum(personal) ? confidence * personal + (1 - confidence) * fallback : fallback);
-  const logs = win.map((d) => d.hrv).filter((v) => isNum(v) && v > 0).map((v) => Math.log(v));
-  const rhrs = win.map((d) => d.resting_hr).filter((v) => isNum(v) && v > 0);
-  const hrvLog = blend(logs.length ? mean(logs) : null, Math.log(DEFAULT_HRV));
-  const hrvLogSd = Math.max(MIN_HRV_SD / DEFAULT_HRV, blend(logs.length > 1 ? sd(logs) : null, DEFAULT_HRV_SD / DEFAULT_HRV));
-  const rhr = blend(rhrs.length ? mean(rhrs) : null, DEFAULT_RHR);
-  const rhrSd = Math.max(MIN_RHR_SD, blend(rhrs.length > 1 ? sd(rhrs) : null, DEFAULT_RHR_SD));
-  return { days: win.length, confidence, hrv: r1(Math.exp(hrvLog)), hrvLog, hrvLogSd, rhr: r1(rhr), rhrSd: r1(rhrSd) };
+export function baselineV5AsOf(history, date) {
+  const config = SCORING_CONFIG.recoveryV5;
+  const window = history.filter((day) => day.date < date).slice(-config.baselineWindow);
+  const hrvValues = window.map((day) => day.hrv).filter((value) => isNum(value) && value > config.minHrv && value < config.maxHrv);
+  const rhrValues = window.map((day) => day.resting_hr).filter((value) => isNum(value) && value >= config.minRhr && value <= config.maxRhr);
+  const hrv = hrvValues.length ? mean(hrvValues) : config.defaultHrv;
+  const rhr = rhrValues.length ? mean(rhrValues) : config.defaultRhr;
+  const hrvSdPersonal = hrvValues.length > 1 ? sd(hrvValues) : 0;
+  const rhrSdPersonal = rhrValues.length > 1 ? sd(rhrValues) : 0;
+  const shrink = (n, personal, prior) => (n * personal + config.shrinkageK * prior) / (n + config.shrinkageK);
+  const hrvSd = shrink(hrvValues.length, hrvSdPersonal, hrv * config.hrvPriorSdFraction);
+  const rhrSd = Math.max(config.minRhrSd, shrink(rhrValues.length, rhrSdPersonal, config.rhrPriorSd));
+  return {
+    hrv: r1(hrv), hrvSd: r1(hrvSd), hrvN: hrvValues.length,
+    rhr: r1(rhr), rhrSd: r1(rhrSd), rhrN: rhrValues.length,
+  };
 }
 
-function recoveryScore(d, base, sleepPerformance) {
-  const hrv = isNum(d.hrv) && d.hrv > 0 ? d.hrv : null;
-  const rhr = isNum(d.resting_hr) && d.resting_hr > 0 ? d.resting_hr : null;
-  if (hrv == null && rhr == null) return null;
-  let s = RECOVERY_NEUTRAL;
-  if (hrv != null) s += W_HRV_Z * ((Math.log(hrv) - base.hrvLog) / base.hrvLogSd);
-  if (rhr != null) s -= W_RHR_Z * ((rhr - base.rhr) / base.rhrSd);
-  if (sleepPerformance != null) s += (sleepPerformance - 80) * W_SLEEP;
-  return Math.round(clamp(s, 1, 99));
-}
-
-export function recoveryRateAsOf(history, date) {
-  const prior = history.filter((d) => d.date < date).slice(-RATE_WINDOW);
-  const rests = (d) => isNum(d.strain) && d.strain <= REST_STRAIN && isNum(d.recovery) && d.recovery < RECOVERY_CEILING;
-  const deltas = [];
-  for (let i = 1; i < prior.length; i++) {
-    const a = prior[i - 1];
-    const b = prior[i];
-    if (!rests(a) || !rests(b)) continue;
-    const hours = (Date.parse(b.date) - Date.parse(a.date)) / 3600000;
-    if (!(hours > 0) || hours > RATE_MAX_GAP_H) continue;
-    deltas.push(b.recovery - a.recovery);
+function recoveryCompositeV5(hrv, rhr, sleepPerformance, base) {
+  const config = SCORING_CONFIG.recoveryV5;
+  /** @type {[string, number, number][]} */
+  const terms = [];
+  if (isNum(hrv) && hrv > config.minHrv && hrv < config.maxHrv) {
+    terms.push(["hrv", config.weights.hrv, clamp((hrv - base.hrv) / base.hrvSd, -config.zLimit, config.zLimit)]);
   }
-  const pairs = deltas.length;
-  const learned = pairs >= RATE_MIN_PAIRS;
-  const rate = learned ? r1(clamp(mean(deltas), RATE_MIN, RATE_MAX)) : null;
-  const spread = learned && deltas.length > 1 ? r1(sd(deltas)) : null;
-  return { rate, spread, confidence: learned ? Math.min(1, pairs / RATE_FULL_PAIRS) : 0, pairs, learned };
+  if (isNum(rhr) && rhr >= config.minRhr && rhr <= config.maxRhr) {
+    terms.push(["rhr", config.weights.rhr, -clamp((rhr - base.rhr) / base.rhrSd, -config.zLimit, config.zLimit)]);
+  }
+  if (isNum(sleepPerformance)) {
+    terms.push(["sleep", config.weights.sleep, clamp((sleepPerformance - config.sleepNeutral) / config.sleepRange, -config.zLimit, config.zLimit)]);
+  }
+  if (!terms.length) return { score: null, zc: null, hrvZ: null, rhrZ: null, sleepZ: null };
+  const denominator = Math.sqrt(terms.reduce((sum, [, weight]) => sum + weight * weight, 0));
+  const zc = terms.reduce((sum, [, weight, term]) => sum + weight * term, 0) / denominator;
+  return {
+    zc,
+    hrvZ: terms.find(([key]) => key === "hrv")?.[2] ?? null,
+    rhrZ: terms.find(([key]) => key === "rhr")?.[2] ?? null,
+    sleepZ: terms.find(([key]) => key === "sleep")?.[2] ?? null,
+  };
 }
 
-export function nextDayProjection(recovery, rate, spread) {
-  if (recovery == null || !isNum(rate)) return null;
-  const mid = recovery + rate;
-  const half = isNum(spread) ? spread : 0;
-  const band = (v) => Math.round(clamp(v, 1, 99));
-  return { mid: band(mid), low: band(mid - half), high: band(mid + half) };
+function workoutRecoveryMinutes(workout) {
+  const config = SCORING_CONFIG.recoveryV6;
+  if (isNum(workout.recovery_time_min) && workout.recovery_time_min > 0) return workout.recovery_time_min;
+  const load = isNum(workout.workout_load) && workout.workout_load > 0
+    ? workout.workout_load
+    : isNum(workout.strain) ? loadFromStrain(workout.strain) : 0;
+  return load > 0 ? load * config.fallbackMinutesPerLoadPoint : 0;
+}
+
+function workoutEnd(workout) {
+  if (typeof workout.ended_at === "string") {
+    const timestamp = Date.parse(workout.ended_at);
+    if (Number.isFinite(timestamp)) return timestamp;
+  }
+  const time = String(workout.end_time || "");
+  const dateTime = time.includes("T") ? time : `${workout.date}T${time || workout.start_time || "00:00"}`;
+  const timestamp = Date.parse(dateTime);
+  if (Number.isFinite(timestamp)) return timestamp + (isNum(workout.duration_min) && !time ? workout.duration_min * 60000 : 0);
+  return NaN;
+}
+
+export function workoutDebtAt(workouts, at, personalSpeed = SCORING_CONFIG.recoveryV6.personalSpeedDefault) {
+  const config = SCORING_CONFIG.recoveryV6;
+  const sessions = [];
+  let debt = 0;
+  for (const workout of workouts) {
+    const end = workoutEnd(workout);
+    const recoveryMinutes = workoutRecoveryMinutes(workout);
+    if (!Number.isFinite(end) || end > at || recoveryMinutes <= 0) continue;
+    const debtPoints = Math.min(config.maxDebtPerWorkout, config.debtPointsPerHour * recoveryMinutes / 60);
+    const remaining = debtPoints * Math.max(0, 1 - (at - end) / (recoveryMinutes * personalSpeed * 60000));
+    if (remaining > 0) {
+      debt += remaining;
+      sessions.push({
+        activity: workout.activity || "Workout",
+        end_time: workout.ended_at || `${workout.date}T${workout.end_time || workout.start_time || "00:00"}`,
+        debt: r1(remaining),
+      });
+    }
+  }
+  return { debt: Math.min(config.maxWorkoutDebt, debt), sessions };
+}
+
+export function recoveryAtTime(workouts, zc, at, personalSpeed = SCORING_CONFIG.recoveryV6.personalSpeedDefault, lastStrainAt = null) {
+  const config = SCORING_CONFIG.recoveryV6;
+  const time = at instanceof Date ? at.getTime() : Number(at);
+  const debtNow = workoutDebtAt(workouts, time, personalSpeed);
+  const physioPenalty = Math.min(config.maxPhysioPenalty, config.physioPenaltyPerNegativeZ * Math.max(0, -(isNum(zc) ? zc : 0)));
+  const calculate = (hours) => {
+    const debt = workoutDebtAt(workouts, time + hours * 3600000, personalSpeed).debt;
+    const physiology = physioPenalty * Math.exp(-hours / config.physioDecayHours);
+    return clamp(100 - debt - physiology, config.recoveryMin, config.recoveryMax);
+  };
+  const recovery = Math.round(calculate(0));
+  let timeToFull = null;
+  for (let hours = config.simulationStepHours; hours <= config.simulationMaxHours; hours += config.simulationStepHours) {
+    if (calculate(hours) >= config.fullyRecoveredAt) { timeToFull = hours; break; }
+  }
+  const recentStrain = isNum(lastStrainAt) && lastStrainAt <= time && time - lastStrainAt <= config.stillAccruingMinutes * 60000;
+  const stillAccruing = recentStrain || debtNow.sessions.some((session) => {
+    const end = Date.parse(session.end_time);
+    return Number.isFinite(end) && end > time - config.stillAccruingMinutes * 60000;
+  });
+  return {
+    recovery,
+    recovery_evaluated_at: new Date(time).toISOString(),
+    workout_debt: r1(debtNow.debt),
+    physio_penalty: r1(physioPenalty),
+    recovery_sessions: debtNow.sessions,
+    time_to_full_hours: recovery >= config.fullyRecoveredAt ? 0 : timeToFull,
+    recovery_status: stillAccruing ? "still accruing" : recovery >= config.fullyRecoveredAt ? "Fully recovered" : timeToFull == null ? "Over 72h to full" : `${timeToFull}h to full`,
+    recovery_still_accruing: stillAccruing,
+  };
+}
+
+export function localDateTimeToEpoch(value, timezone) {
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
+  if (!match) return NaN;
+  const [, year, month, day, hour, minute, second = "0"] = match;
+  let utc = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+  if (!timezone) return utc;
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+  });
+  for (let i = 0; i < 2; i++) {
+    const parts = Object.fromEntries(formatter.formatToParts(new Date(utc)).map(({ type, value }) => [type, value]));
+    const represented = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second));
+    utc -= represented - utc;
+  }
+  return utc;
+}
+
+function localSnapshotTime(date, timezone, hour = SCORING_CONFIG.recoveryV6.snapshotHour) {
+  return localDateTimeToEpoch(`${date}T${String(hour).padStart(2, "0")}:00:00`, timezone);
+}
+
+function dateInTimezone(time, timezone) {
+  const parts = Object.fromEntries(new Intl.DateTimeFormat("en", {
+    timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit",
+  }).formatToParts(time).map(({ type, value }) => [type, value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function personalRecoverySpeed(prepared, workouts) {
+  const config = SCORING_CONFIG.recoveryV6;
+  const zByDate = new Map(prepared.filter((entry) => isNum(entry.composite.zc)).map((entry) => [entry.day.date, entry.composite.zc]));
+  const latest = prepared.at(-1)?.day.date;
+  const earliest = latest ? new Date(`${latest}T00:00:00Z`) : null;
+  if (earliest) earliest.setUTCDate(earliest.getUTCDate() - config.personalWindowDays + 1);
+  const startDate = earliest?.toISOString().slice(0, 10);
+  const recentWorkouts = workouts.filter((workout) => workout.date >= startDate && workout.date <= latest);
+  const workoutDates = new Set(recentWorkouts.map((workout) => workout.date));
+  const workoutEffects = [];
+  const restEffects = [];
+  for (const entry of prepared) {
+    const previousDate = new Date(`${entry.day.date}T00:00:00Z`);
+    previousDate.setUTCDate(previousDate.getUTCDate() - 1);
+    const previous = previousDate.toISOString().slice(0, 10);
+    const effect = -zByDate.get(entry.day.date);
+    if (!Number.isFinite(effect)) continue;
+    if (workoutDates.has(previous)) workoutEffects.push(effect);
+    else if (zByDate.has(previous)) restEffects.push(effect);
+  }
+  const n = workoutDates.size;
+  if (n < config.personalSpeedMinWorkoutDays || !workoutEffects.length || !restEffects.length) {
+    return { value: config.personalSpeedDefault, workoutDays: n, label: n >= config.personalizedAtWorkoutDays ? "Personalized" : "Using your watch's estimate" };
+  }
+  const shrink = n / (n + config.personalSpeedShrinkN);
+  const difference = mean(workoutEffects) - mean(restEffects);
+  const value = clamp(1 + config.personalSpeedImpact * difference * shrink, config.personalSpeedMin, config.personalSpeedMax);
+  return { value: r2(value), workoutDays: n, label: n >= config.personalizedAtWorkoutDays ? "Personalized" : "Using your watch's estimate" };
 }
 
 function anchorMinutes(ts) {
@@ -154,13 +264,15 @@ function anchorMinutes(ts) {
 }
 
 export function sleepConsistency(nights) {
+  const config = SCORING_CONFIG.sleep;
   const bed = nights.map((d) => anchorMinutes(d.sleep_start)).filter(isNum);
   const wake = nights.map((d) => anchorMinutes(d.sleep_end)).filter(isNum);
   if (bed.length < 2 || wake.length < 2) return null;
-  return Math.round(clamp(100 - CONSISTENCY_K * (sd(bed) + sd(wake)), 0, 100));
+  return Math.round(clamp(100 - config.consistencyK * (sd(bed) + sd(wake)), 0, 100));
 }
 
 export function durationVariability(nights) {
+  const config = SCORING_CONFIG.sleep;
   const hours = nights.map((d) => d.sleep_hours).filter(isNum);
   if (hours.length < 2) return null;
   return Math.round(sd(hours) * 60);
@@ -181,9 +293,11 @@ export function computeScores(days, workouts, targets) {
 
   const wanted = new Set(targets);
   const out = new Map();
+  const latestDate = ordered.at(-1)?.date;
+  const v5Config = SCORING_CONFIG.recoveryV5;
+  const prepared = [];
   for (let i = 0; i < ordered.length; i++) {
     const d = ordered[i];
-    if (!wanted.has(d.date)) continue;
     const priorStrain = i > 0 ? strain.get(ordered[i - 1].date) || 0 : 0;
     const stageSum = (d.deep_minutes || 0) + (d.light_minutes || 0) + (d.rem_minutes || 0);
     const sleepMinutes = d.sleep_minutes || stageSum || (d.sleep_hours ? d.sleep_hours * 60 : null);
@@ -191,35 +305,93 @@ export function computeScores(days, workouts, targets) {
     const sleep_need = r1(7.5 + priorStrain * 0.05);
     const sleep_performance = sleep_hours ? Math.round(clamp((sleep_hours / sleep_need) * 100, 0, 100)) : null;
 
-    const base = baselineAsOf(ordered, d.date);
-    const recovery = recoveryScore(d, base, sleep_performance);
-    const rate = recoveryRateAsOf(ordered, d.date);
-    const projection = nextDayProjection(recovery, rate.rate, rate.spread);
-    const nights = ordered.filter((x) => x.date <= d.date).slice(-CONSISTENCY_NIGHTS);
+    const base = baselineV5AsOf(ordered, d.date);
+    const composite = recoveryCompositeV5(d.hrv, d.resting_hr, sleep_performance, base);
+    const nights = ordered.filter((x) => x.date <= d.date).slice(-SCORING_CONFIG.sleep.consistencyNights);
+    const sleepSessionEnded = typeof d.sleep_end === "string" && Number.isFinite(Date.parse(d.sleep_end));
+    prepared.push({ day: d, base, composite, sleep_hours, sleep_need, sleep_performance, nights, sleepSessionEnded });
+  }
 
-    out.set(d.date, {
+  const speed = personalRecoverySpeed(prepared, workouts);
+  let latestCompletedZc = null;
+  for (const entry of prepared) {
+    const { day: d, base, composite, sleep_hours, sleep_need, sleep_performance, nights, sleepSessionEnded } = entry;
+    const timezone = d.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+    const snapshotAt = localSnapshotTime(d.date, timezone);
+    const sleepEnd = d.sleep_end ? localDateTimeToEpoch(d.sleep_end, timezone) : NaN;
+    const completedBySnapshot = sleepSessionEnded && Number.isFinite(sleepEnd)
+      && sleepEnd <= snapshotAt
+      && String(d.sleep_end).slice(0, 10) === d.date;
+    if (completedBySnapshot && isNum(composite.zc)) latestCompletedZc = composite.zc;
+    const bodyZc = completedBySnapshot ? composite.zc : latestCompletedZc;
+    const lastStrainAt = d.strain_sampled_at ? localDateTimeToEpoch(d.strain_sampled_at, timezone) : null;
+    const recoveryNow = recoveryAtTime(workouts, bodyZc, snapshotAt, speed.value, lastStrainAt);
+    const recoveryComponents = {
+      hrv: isNum(d.hrv) ? d.hrv : null,
+      hrv_z: composite.hrvZ == null ? null : r2(composite.hrvZ),
+      rhr: isNum(d.resting_hr) ? d.resting_hr : null,
+      rhr_z: composite.rhrZ == null ? null : r2(composite.rhrZ),
+      sleep_perf: sleep_performance,
+      sleep_z: composite.sleepZ == null ? null : r2(composite.sleepZ),
+      zc: composite.zc == null ? null : r2(composite.zc),
+      v5_composite_z: composite.zc == null ? null : r2(composite.zc),
+      old_v4_score: null,
+      new_v5_score: null,
+      hrv_for_90: null,
+      hrv_for_99: null,
+      hrv_sample_count: d.hrv_samples_count ?? null,
+      rhr_sample_count: d.rhr_samples_count ?? null,
+      sleep_session_ended: completedBySnapshot,
+      hrv_baseline: base.hrv,
+      hrv_sd_eff: base.hrvSd,
+      hrv_baseline_n: base.hrvN,
+      rhr_baseline: base.rhr,
+      rhr_sd_eff: base.rhrSd,
+      rhr_baseline_n: base.rhrN,
+      workout_debt: recoveryNow.workout_debt,
+      physio_penalty: recoveryNow.physio_penalty,
+      debt_sessions: recoveryNow.recovery_sessions,
+      personal_speed: speed.value,
+      personal_speed_label: speed.label,
+      personal_speed_workout_days: speed.workoutDays,
+      snapshot_at: new Date(snapshotAt).toISOString(),
+    };
+    const today = dateInTimezone(new Date(), timezone);
+    const provisional = d.date === today && !completedBySnapshot;
+    const scored = {
       strain: strain.get(d.date),
-      recovery,
+      recovery: recoveryNow.recovery,
+      recovery_provisional: provisional,
+      workout_debt: recoveryNow.workout_debt,
+      physio_penalty: recoveryNow.physio_penalty,
+      time_to_full_hours: recoveryNow.time_to_full_hours,
+      recovery_evaluated_at: new Date(snapshotAt).toISOString(),
+      recovery_status: recoveryNow.recovery_status,
+      recovery_still_accruing: recoveryNow.recovery_still_accruing,
+      recovery_sessions: recoveryNow.recovery_sessions,
+      recovery_rating: d.recovery_rating ?? null,
       sleep_hours,
       sleep_need,
       sleep_performance,
-      recovery_projection: projection ? projection.mid : null,
-      recovery_projection_low: projection ? projection.low : null,
-      recovery_projection_high: projection ? projection.high : null,
+      recovery_projection: null,
+      recovery_projection_low: null,
+      recovery_projection_high: null,
+      recovery_rate: null,
+      recovery_rate_spread: null,
+      recovery_rate_pairs: 0,
+      recovery_rate_confidence: 0,
       sleep_consistency: sleepConsistency(nights),
       sleep_duration_variability: durationVariability(nights),
       baseline_hrv: base.hrv,
-      baseline_hrv_logsd: r2(base.hrvLogSd),
+      baseline_hrv_logsd: r2(base.hrvSd),
       baseline_rhr: base.rhr,
       baseline_rhr_sd: r2(base.rhrSd),
-      baseline_days: base.days,
-      baseline_confidence: r2(base.confidence),
-      recovery_rate: rate.rate,
-      recovery_rate_spread: rate.spread,
-      recovery_rate_pairs: rate.pairs,
-      recovery_rate_confidence: r2(rate.confidence),
+      baseline_days: Math.max(base.hrvN, base.rhrN),
+      baseline_confidence: r2(Math.max(base.hrvN, base.rhrN) / v5Config.baselineWindow),
+      recovery_components: recoveryComponents,
       algo_version: ALGO_VERSION,
-    });
+    };
+    if (wanted.has(d.date)) out.set(d.date, scored);
   }
   return out;
 }

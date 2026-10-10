@@ -7,12 +7,11 @@
 // finalizeDay() turns it into resting HR and time-in-zone, then drops it.
 
 import { zoneForHr } from "../../scoring/scores.js";
+import { SCORING_CONFIG } from "../../scoring/config.js";
 
 export type ParsedData = { days: Record<string, any>[]; workouts: Record<string, any>[] };
 
 const DATE_RE = /(\d{4})[.\/-](\d{2})[.\/-](\d{2})(?:[ T](\d{2}):(\d{2}))?/;
-const HR_MIN = 30; // plausible overnight resting floor
-const HR_MAX = 120; // plausible overnight resting ceiling
 const GAP_CAP = 5; // minutes a single reading may stand for
 const COVER_SPAN = 360; // minutes of estimated wear before the HR trace is trusted
 const COVER_COUNT = 60; // readings needed to go with it
@@ -119,12 +118,23 @@ const toClock = (m: number) => {
 };
 
 const DAY_FIELDS = [
-  "hrv", "resting_hr", "steps", "weight", "spo2", "calories",
+  "hrv", "resting_hr", "hrv_samples_count", "rhr_samples_count", "steps", "weight", "spo2", "calories",
   "sleep_minutes", "deep_minutes", "light_minutes", "rem_minutes", "awake_minutes",
   "nap_minutes", "skin_temp", "respiratory_rate", "body_fat",
 ];
 
 const isNum = (v: any) => typeof v === "number" && Number.isFinite(v);
+const normalizeHeartRate = (value: number) => {
+  const unwrapped = value < 0 ? value + 256 : value;
+  return unwrapped >= 30 && unwrapped <= 220 ? unwrapped : null;
+};
+const percentile = (values: number[], p: number) => {
+  const sorted = [...values].sort((a, b) => a - b);
+  const position = (sorted.length - 1) * p;
+  const low = Math.floor(position);
+  const high = Math.ceil(position);
+  return sorted[low] + (sorted[high] - sorted[low]) * (position - low);
+};
 
 function timezoneOffsetMinutes(value: unknown): number {
   const match = String(value || "").match(/^([+-])(\d{2}):?(\d{2})$/);
@@ -205,7 +215,6 @@ export function finalizeHealthDetailDay(day: Record<string, any>) {
     result.resting_hr = Math.round(values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2);
   }
   if (result._spo2_points?.length) result.spo2 = average(result._spo2_points);
-  if (result._hrv_points?.length) result.hrv = average(result._hrv_points);
   if (result._skin_temp_points?.length) result.skin_temp = average(result._skin_temp_points, 1);
   if (result._weight_points?.length) result.weight = Math.round(latest(result._weight_points) * 10) / 10;
   if (result._body_fat_points?.length) result.body_fat = Math.round(latest(result._body_fat_points) * 10) / 10;
@@ -217,6 +226,16 @@ export function finalizeHealthDetailDay(day: Record<string, any>) {
       result.sleep_start = toIso(result._sleepFrom);
       result.sleep_end = toIso(result._sleepTo);
     }
+  }
+  delete result.hrv;
+  const hrvWindow = result._sleepFrom != null && result._sleepTo > result._sleepFrom
+    ? (result._hrv_points || []).filter(([time]: [number, number]) => time >= result._sleepFrom && time <= result._sleepTo)
+    : [];
+  result.hrv_samples_count = hrvWindow.length;
+  if (hrvWindow.length >= SCORING_CONFIG.recoveryV5.minHrvSamples) {
+    const values = hrvWindow.map((point: [number, number]) => point[1]).sort((a: number, b: number) => a - b);
+    const middle = Math.floor(values.length / 2);
+    result.hrv = Math.round(values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2);
   }
   return result;
 }
@@ -288,11 +307,18 @@ export function parseHealthDetailRecords(records: unknown): ParsedData | null {
       seen.add(identity);
 
       if (metric === "dynamic_hr") {
-        const bpm = numberFrom(value, "heartRate", "value");
-        if (bpm != null && bpm >= 30 && bpm <= 220) day._hr.push(Math.floor((timestamp + offset * 60000) / 60000), bpm);
+        const rawBpm = numberFrom(value, "heartRate", "value");
+        const bpm = rawBpm == null ? null : normalizeHeartRate(rawBpm);
+        if (bpm != null) {
+          const localMinute = Math.floor((timestamp + offset * 60000) / 60000);
+          day._hr.push(localMinute, bpm);
+          if (new Date(localMinute * 60000).getUTCHours() >= 12) {
+            getDay(nextDay(date))._hr.push(localMinute, bpm);
+          }
+        }
       } else if (metric === "resting_hr") {
         const bpm = numberFrom(value, "restingHeartRate", "heartRate", "value");
-        if (bpm != null && bpm >= 30 && bpm <= 120) day._resting_points.push([timestamp, bpm]);
+        if (bpm != null && bpm >= SCORING_CONFIG.recoveryV5.minRhr && bpm <= SCORING_CONFIG.recoveryV5.maxRhr) day._resting_points.push([timestamp, bpm]);
       } else if (metric === "weight_body_fat") {
         const weight = numberFrom(value, "bodyWeight", "weight");
         const bodyFat = numberFrom(value, "bodyFatRate", "bodyFat");
@@ -303,7 +329,13 @@ export function parseHealthDetailRecords(records: unknown): ParsedData | null {
         if (saturation != null && saturation >= 50 && saturation <= 100) day._spo2_points.push([timestamp, saturation]);
       } else if (metric === "hrv") {
         const hrv = numberFrom(value, "heartRateVariabilityRMSSD", "hrv");
-        if (hrv != null && hrv > 5 && hrv < 300) day._hrv_points.push([timestamp, hrv]);
+        if (hrv != null && hrv > SCORING_CONFIG.recoveryV5.minHrv && hrv < SCORING_CONFIG.recoveryV5.maxHrv) {
+          const localMinute = Math.floor((timestamp + offset * 60000) / 60000);
+          day._hrv_points.push([localMinute, hrv]);
+          if (new Date(localMinute * 60000).getUTCHours() >= 12) {
+            getDay(nextDay(date))._hrv_points.push([localMinute, hrv]);
+          }
+        }
       } else if (metric === "skin_temp") {
         const temperature = numberFrom(value, "skinTemperature", "skinTemp");
         if (temperature != null && temperature >= 10 && temperature <= 45) day._skin_temp_points.push([timestamp, temperature]);
@@ -353,6 +385,7 @@ export function parseHuaweiMotionPathRecords(records: unknown): Record<string, a
     workouts.push({
       date: dayForTimestamp(start, offset),
       start_time: `${pad(startLocal.getUTCHours())}:${pad(startLocal.getUTCMinutes())}`,
+      ended_at: new Date(end).toISOString(),
       activity: "Workout",
       sport_type: numeric(summary.sportType),
       duration_min: durationMin,
@@ -405,6 +438,9 @@ export function sessionWindows(workouts: Record<string, any>[]) {
 export function finalizeDay(day: any, spans: { from: number; to: number }[] = []) {
   const o: any = { date: day.date };
   for (const k of DAY_FIELDS) if (isNum(day[k])) o[k] = day[k];
+  const deviceRestingHr = isNum(o.resting_hr) && o.resting_hr >= SCORING_CONFIG.recoveryV5.minRhr && o.resting_hr <= SCORING_CONFIG.recoveryV5.maxRhr
+    ? o.resting_hr
+    : null;
 
   const start = asStamp(day.sleep_start, day.date);
   const end = asStamp(day.sleep_end, day.date);
@@ -420,16 +456,35 @@ export function finalizeDay(day: any, spans: { from: number; to: number }[] = []
   // A date left holding nothing but a stray trace is not a day worth scoring.
   const keep = () => (Object.keys(o).length > 1 ? o : null);
 
-  const pts = packPoints(day._hr);
-  if (!pts) return keep();
+  const pts = packPoints(day._hr) || [];
+  if (pts.length) o.strain_sampled_at = toIso(Math.max(...pts.map(([time]) => time)));
 
   const dayStart = epoch(`${o.date}T00:00`);
-  const plausible = (v: number) => v > HR_MIN && v <= HR_MAX;
+  const recoveryConfig = SCORING_CONFIG.recoveryV5;
+  const windowHr = start && end
+    ? slicePoints(pts, epoch(start), epoch(end)).map((point) => point[1])
+      .filter((value) => value >= recoveryConfig.minRhr && value <= recoveryConfig.maxRhr)
+    : [];
+  o.rhr_samples_count = windowHr.length;
+  if (windowHr.length >= recoveryConfig.minRhrSamples) {
+    o.resting_hr = Math.round(percentile(windowHr, 0.05));
+  } else if (deviceRestingHr != null) {
+    o.resting_hr = deviceRestingHr;
+  } else {
+    delete o.resting_hr;
+  }
 
-  // Overnight pool first; a day whose sleep file is missing falls back to the whole day.
-  let pool = start && end ? slicePoints(pts, epoch(start), epoch(end)).map((p) => p[1]).filter(plausible) : [];
-  if (pool.length < MIN_POOL) pool = slicePoints(pts, dayStart, dayStart + 1440).map((p) => p[1]).filter(plausible);
-  if (pool.length) o.resting_hr = Math.round(band(pool, 0.02, 0.08));
+  const hrvSamples: [number, number][] = start && end
+    ? (day._hrv_points || []).filter(([time]: [number, number]) => time >= epoch(start) && time <= epoch(end))
+    : [];
+  o.hrv_samples_count = hrvSamples.length;
+  if (hrvSamples.length >= recoveryConfig.minHrvSamples) {
+    const values = hrvSamples.map((point) => point[1]).sort((a, b) => a - b);
+    const middle = Math.floor(values.length / 2);
+    o.hrv = Math.round(values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2);
+  } else {
+    delete o.hrv;
+  }
 
   const dayPts = slicePoints(pts, dayStart, dayStart + 1440);
   if (o.resting_hr && dayPts.length >= 2) {
@@ -503,6 +558,8 @@ export function parseMetricsCsv(text: string): ParsedData | null {
   };
   const dateI = col("date", "datetimestamp");
   const hrI = col("heartrate");
+  const hrvI = col("heartratevariability", "hrv");
+  const restingHrI = col("restingheartrate", "restinghr");
   const spo2I = col("oxygensaturation", "bloodoxygen", "spo2");
   const stepsI = col("steps");
   const weightI = col("weight");
@@ -513,12 +570,22 @@ export function parseMetricsCsv(text: string): ParsedData | null {
 
   const days = new Map<string, any>();
   const get = (date: string) => {
-    if (!days.has(date)) days.set(date, { date, _spo2: [] as number[], _steps: 0, _weight: [] as number[], _hr: [] as number[], _segs: [] as any[] });
+    if (!days.has(date)) days.set(date, {
+      date,
+      _spo2: [] as number[],
+      _steps: 0,
+      _weight: [] as number[],
+      _hr: [] as number[],
+      _hrv_points: [] as [number, number][],
+      _deviceRhr: [] as number[],
+      _segs: [] as any[],
+    });
     return days.get(date);
   };
   // Evening readings are also handed to the next day, whose overnight window starts
   // before midnight. Held aside so the extra copy can't invent a day of its own.
   const evening = new Map<string, number[]>();
+  const eveningHrv = new Map<string, [number, number][]>();
 
   for (const r of rows) {
     const ts = stamp(r[dateI]);
@@ -526,13 +593,26 @@ export function parseMetricsCsv(text: string): ParsedData | null {
     const n = (i: number) => (i >= 0 ? parseFloat(r[i]) : NaN);
 
     if (hrI >= 0) {
-      const v = n(hrI);
-      if (v > 0) {
+      const raw = n(hrI);
+      const v = Number.isFinite(raw) ? normalizeHeartRate(raw) : null;
+      if (v != null) {
         get(ts.date)._hr.push(ts.minutes, v);
         if (ts.hour >= 18) {
           const next = nextDay(ts.date);
           if (!evening.has(next)) evening.set(next, []);
           evening.get(next)!.push(ts.minutes, v);
+        }
+      }
+    }
+    if (hrvI >= 0) {
+      const value = n(hrvI);
+      if (Number.isFinite(value) && value > SCORING_CONFIG.recoveryV5.minHrv && value < SCORING_CONFIG.recoveryV5.maxHrv) {
+        const point: [number, number] = [ts.minutes, value];
+        get(ts.date)._hrv_points.push(point);
+        if (ts.hour >= 12) {
+          const next = nextDay(ts.date);
+          if (!eveningHrv.has(next)) eveningHrv.set(next, []);
+          eveningHrv.get(next)!.push(point);
         }
       }
     }
@@ -543,6 +623,11 @@ export function parseMetricsCsv(text: string): ParsedData | null {
     const sleepRow = !!stageKey && durI >= 0;
     // A sleep session starting in the evening belongs to the following day.
     const d = get(sleepRow && ts.hour >= 18 ? nextDay(ts.date) : ts.date);
+
+    if (restingHrI >= 0) {
+      const value = n(restingHrI);
+      if (value >= SCORING_CONFIG.recoveryV5.minRhr && value <= SCORING_CONFIG.recoveryV5.maxRhr) d._deviceRhr.push(value);
+    }
 
     if (spo2I >= 0) { const v = n(spo2I); if (v > 0) d._spo2.push(v); }
     if (stepsI >= 0) { const v = n(stepsI); if (v > 0) d._steps += v; }
@@ -564,6 +649,10 @@ export function parseMetricsCsv(text: string): ParsedData | null {
     const d = days.get(date);
     if (d) d._hr.push(...pts);
   }
+  for (const [date, points] of eveningHrv) {
+    const day = days.get(date);
+    if (day) day._hrv_points.push(...points);
+  }
 
   for (const d of days.values()) if (d._segs.length) assignNightAndNaps(d);
 
@@ -576,6 +665,20 @@ export function parseMetricsCsv(text: string): ParsedData | null {
     if (d._sleepFrom != null && d._sleepTo != null && d._sleepTo > d._sleepFrom) {
       o.sleep_start = toIso(d._sleepFrom);
       o.sleep_end = toIso(d._sleepTo);
+    }
+    const hrvWindow = d._sleepFrom != null && d._sleepTo > d._sleepFrom
+      ? d._hrv_points.filter(([time]: [number, number]) => time >= d._sleepFrom && time <= d._sleepTo).map(([, value]: [number, number]) => value)
+      : [];
+    o.hrv_samples_count = hrvWindow.length;
+    if (hrvWindow.length >= SCORING_CONFIG.recoveryV5.minHrvSamples) {
+      const sorted = [...hrvWindow].sort((a, b) => a - b);
+      const middle = Math.floor(sorted.length / 2);
+      o.hrv = Math.round(sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2);
+    }
+    if (d._deviceRhr.length) {
+      const sortedDeviceRhr = [...d._deviceRhr].sort((a: number, b: number) => a - b);
+      const middle = Math.floor(sortedDeviceRhr.length / 2);
+      o.resting_hr = Math.round(sortedDeviceRhr.length % 2 ? sortedDeviceRhr[middle] : (sortedDeviceRhr[middle - 1] + sortedDeviceRhr[middle]) / 2);
     }
     if (d.awake_minutes) o.awake_minutes = d.awake_minutes;
     if (d.nap_minutes) o.nap_minutes = d.nap_minutes;
