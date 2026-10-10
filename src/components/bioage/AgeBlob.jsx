@@ -43,16 +43,14 @@ export default function AgeBlob({ number, deltaLabel, deltaTone = "younger", siz
       };
     });
 
-    // 64 points around the blob boundary; few modes keep the silhouette smooth + cheap.
     const BP = 64;
     const baseR = r * 0.82;
 
     // One frame at time t — shared by the animated loop and the static reduced-motion path.
-    const drawBlob = (cx, cy, tone, phase, breath) => {
+    const drawBlob = (cx, cy, phase, breath) => {
       ctx.beginPath();
       for (let i = 0; i <= BP; i++) {
         const ang = (i / BP) * Math.PI * 2;
-        // two slow deformation modes give an organic, breathing wobble
         const def =
           Math.sin(ang * 3 + phase) * (baseR * 0.05) +
           Math.sin(ang * 5 + phase * 0.7) * (baseR * 0.035) +
@@ -85,7 +83,7 @@ export default function AgeBlob({ number, deltaLabel, deltaTone = "younger", siz
       g.addColorStop(0, hexA(c.glow, 0.20));
       g.addColorStop(0.6, hexA(c.glow, 0.08));
       g.addColorStop(1, hexA(c.glow, 0));
-      drawBlob(cx, cy, c, phase, breath);
+      drawBlob(cx, cy, phase, breath);
       ctx.fillStyle = g;
       ctx.fill();
 

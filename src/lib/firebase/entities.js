@@ -53,7 +53,14 @@ export async function me() {
   const u = fb().auth.currentUser;
   if (!u) throw new Error("Not signed in");
   const snap = await getDoc(doc(fb().db, "users", u.uid));
-  return { ...(snap.data() || {}), id: u.uid, email: u.email, full_name: u.displayName || "", role: "user" };
+  return {
+    ...(snap.data() || {}),
+    id: u.uid,
+    email: u.email,
+    full_name: u.displayName || "",
+    role: "user",
+    import_log_include_time: snap.data()?.import_log_include_time === true,
+  };
 }
 
 export async function updateMe(data) {

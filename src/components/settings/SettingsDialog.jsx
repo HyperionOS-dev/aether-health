@@ -20,6 +20,7 @@ export default function SettingsDialog() {
   const [unit, setUnit] = useState("cm");
   const [weightKg, setWeightKg] = useState("");
   const [importedWeight, setImportedWeight] = useState(null);
+  const [importLogIncludeTime, setImportLogIncludeTime] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -35,6 +36,7 @@ export default function SettingsDialog() {
         setHeightCm(me.height_cm ?? "");
         setUnit(me.height_unit || "cm");
         setWeightKg(me.weight_kg ?? "");
+        setImportLogIncludeTime(me.import_log_include_time === true);
         setImportedWeight(recent.find((d) => d.weight)?.weight ?? null);
       } catch (e) {
         if (alive) setError(e.response?.data?.error || e.message);
@@ -56,6 +58,7 @@ export default function SettingsDialog() {
         height_cm: heightCm === "" ? null : Number(heightCm),
         height_unit: unit,
         weight_kg: weightKg === "" ? null : Number(weightKg),
+        import_log_include_time: importLogIncludeTime,
       });
       setSaved(true);
     } catch (e) {
@@ -105,6 +108,18 @@ export default function SettingsDialog() {
                   ? `Imported from Huawei Health: ${importedWeight} kg. Leave empty to keep using it.`
                   : "Leave empty to keep using your latest imported weight."}
               </p>
+            </div>
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-hairline bg-surface/40 p-3">
+              <div>
+                <Label htmlFor="import-time-toggle" className="text-sm">Show import time</Label>
+                <p className="text-xs text-muted-foreground">Include the time in names of future imports.</p>
+              </div>
+              <Switch
+                id="import-time-toggle"
+                checked={importLogIncludeTime}
+                onCheckedChange={setImportLogIncludeTime}
+                aria-label="Include time in future import names"
+              />
             </div>
             <div className="flex items-center justify-between gap-3 rounded-xl border border-hairline bg-surface/40 p-3">
               <div>

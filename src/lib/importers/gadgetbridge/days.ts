@@ -146,6 +146,21 @@ export function buildDays(
     }
   }
 
+  // --- Huawei spot HRV readings, summarized by the user's local day
+  const hrvSamples = tableOf(tables, "HUAWEI_HRV_VALUE_SAMPLE");
+  if (hrvSamples) {
+    const iTs = col(hrvSamples.headers, "timestamp");
+    const iValue = col(hrvSamples.headers, "value");
+    for (const row of hrvSamples.rows) {
+      const ms = Date.parse(row[iTs] ?? "");
+      if (!Number.isFinite(ms)) continue;
+      const value = metric(row, iValue);
+      if (value == null || value <= 5 || value >= 300) continue;
+      const day = get(localDate(localMinutes(ms, timezone, fallbackOffset)));
+      (day._hrvSamples ||= []).push(value);
+    }
+  }
+
   // --- per-night summary: HRV and blood oxygen, held by the night's own end date
   const stats = tableOf(tables, "HUAWEI_SLEEP_STATS_SAMPLE");
   if (stats) {
@@ -267,6 +282,10 @@ export function buildDays(
     if (day._temp?.length) {
       day.skin_temp = round1(day._temp.reduce((a: number, b: number) => a + b, 0) / day._temp.length);
       day.sources.skin_temp = "temperature_samples";
+    }
+    if (day.hrv == null && day._hrvSamples?.length) {
+      day.hrv = median(day._hrvSamples);
+      day.sources.hrv = "hrv_samples";
     }
 
     // The night's duration is its staged sleep only — naps and unknown minutes stay out.

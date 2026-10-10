@@ -10,7 +10,7 @@ export default function ImportLogList({ logs }) {
         {logs.map((l) => (
           <div key={l.id} className="flex w-full min-w-0 items-center gap-3 text-sm">
             <span className={`h-2 w-2 shrink-0 rounded-full ${l.status === "success" ? "bg-recovery" : "bg-danger"}`} />
-            <span className="min-w-0 flex-1 truncate" title={l.file_name}>{l.file_name}</span>
+            <span className="min-w-0 flex-1 truncate" title={format(new Date(l.created_date), l.include_time ? "MMM d, yyyy 'import' · h:mm a" : "MMM d, yyyy 'import'")}>{format(new Date(l.created_date), l.include_time ? "MMM d, yyyy 'import' · h:mm a" : "MMM d, yyyy 'import'")}</span>
             <span className="shrink-0 text-xs text-muted-foreground">
               {l.status === "success" ? `${l.days_count || 0}d · ${l.workouts_count || 0}w` : "Failed"} · {format(new Date(l.created_date), "MMM d")}
             </span>

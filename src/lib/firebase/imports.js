@@ -11,25 +11,32 @@ import {
   sessionWindows,
 } from "@/lib/importers/huawei/parse";
 import { entities } from "@/lib/firebase/entities";
+import { me } from "@/lib/firebase/entities";
 import { recomputeScores } from "@/lib/scoring/recompute";
+import { format } from "date-fns";
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const MAX_DAYS = 400;
 const MAX_HUAWEI_FILES = 60;
 const MAX_GADGETBRIDGE_FILES = 4;
 const MAX_FILE_BYTES = 120_000_000;
+const MAX_BATCH_BYTES = 240_000_000;
+const MAX_ZIP_EXPANDED_BYTES = 256_000_000;
 
 const clean = (record) => Object.fromEntries(
   Object.entries(record).filter(([key, value]) => !key.startsWith("_") && value !== null && value !== undefined && value !== "")
 );
 
 function validateFiles(files) {
+  let totalBytes = 0;
   for (const file of files) {
     if (!file.size || file.size > MAX_FILE_BYTES) throw new Error(`${file.name} is empty or larger than 120 MB`);
+    totalBytes += file.size;
+    if (totalBytes > MAX_BATCH_BYTES) throw new Error("Selected files exceed the 240 MB total import limit");
   }
 }
 
-async function saveImport({ label, days, workouts, message, extraLog = {} }) {
+async function saveImport({ days, workouts, message, extraLog = {} }) {
   const existingDays = await entities.DailyMetric.filter({}, "-date", 2000);
   const knownDays = new Map(existingDays.map((day) => [day.date, day]));
   const createDays = [];
@@ -61,8 +68,11 @@ async function saveImport({ label, days, workouts, message, extraLog = {} }) {
   const touchedDates = [...days.map((day) => day.date), ...workouts.map((workout) => workout.date)]
     .filter((date) => DATE.test(String(date)));
   await recomputeScores({ entities }, touchedDates);
+  const includeTime = (await me()).import_log_include_time === true;
+  const importedAt = new Date();
   await entities.ImportLog.create({
-    file_name: label,
+    file_name: format(importedAt, includeTime ? "MMM d, yyyy 'import' · h:mm a" : "MMM d, yyyy 'import'"),
+    include_time: includeTime,
     status: "success",
     days_count: createDays.length + updateDays.length,
     workouts_count: createWorkouts.length,
@@ -72,7 +82,7 @@ async function saveImport({ label, days, workouts, message, extraLog = {} }) {
   return { days: createDays.length + updateDays.length, workouts: createWorkouts.length, updated: updateDays.length };
 }
 
-async function readHuaweiFile(file) {
+async function readHuaweiFile(file, maxExpandedBytes) {
   const lowerName = file.name.toLowerCase();
   if (lowerName.endsWith(".json")) {
     const parsed = JSON.parse(await file.text());
@@ -89,7 +99,7 @@ async function readHuaweiFile(file) {
     return { days: [], workouts: [] };
   }
   if (lowerName.endsWith(".zip")) {
-    const tables = await readZip(new Uint8Array(await file.arrayBuffer()));
+    const { tables, expandedBytes } = await readZip(new Uint8Array(await file.arrayBuffer()), maxExpandedBytes);
     const days = [];
     const workouts = [];
     for (const content of Object.values(tables)) {
@@ -109,7 +119,7 @@ async function readHuaweiFile(file) {
         if (parsed) { days.push(...parsed.days); workouts.push(...parsed.workouts); }
       }
     }
-    return { days, workouts };
+    return { days, workouts, expandedBytes };
   }
   if (!lowerName.endsWith(".csv")) throw new Error(`${file.name}: upload CSV, JSON, or ZIP files`);
   return parseMetricsCsv(await file.text()) || { days: [], workouts: [] };
@@ -121,8 +131,10 @@ export async function importHuaweiFiles(files) {
   const byDate = new Map();
   const rawWorkouts = [];
   const perFile = [];
+  let expandedBytes = 0;
   for (const file of files) {
-    const parsed = await readHuaweiFile(file);
+    const parsed = await readHuaweiFile(file, MAX_ZIP_EXPANDED_BYTES - expandedBytes);
+    expandedBytes += parsed.expandedBytes || 0;
     let accepted = 0;
     for (const day of parsed.days || []) {
       if (!day || !DATE.test(String(day.date))) continue;
@@ -142,7 +154,6 @@ export async function importHuaweiFiles(files) {
     .filter(Boolean);
   if (!incoming.length && !rawWorkouts.length) throw new Error("No supported health records were found in these Huawei files.");
   const result = await saveImport({
-    label: files.map((file) => file.name).join(", ").slice(0, 120),
     days: incoming,
     workouts: rawWorkouts,
     message: "Imported from Huawei Health",
@@ -154,12 +165,21 @@ export async function importGadgetbridgeFiles(files, timezone, offsetMinutes) {
   if (files.length > MAX_GADGETBRIDGE_FILES) throw new Error(`Choose no more than ${MAX_GADGETBRIDGE_FILES} files at a time`);
   if (!files.length) throw new Error("Choose at least one export file");
   validateFiles(files);
+  /** @type {Record<string, string>} */
   const tables = {};
   const perFile = [];
+  let expandedBytes = 0;
   for (const file of files) {
     const bytes = new Uint8Array(await file.arrayBuffer());
     const zipped = bytes[0] === 0x50 && bytes[1] === 0x4b;
-    const found = zipped ? await readZip(bytes) : singleTable(file.name, new TextDecoder().decode(bytes));
+    let found;
+    if (zipped) {
+      const result = await readZip(bytes, MAX_ZIP_EXPANDED_BYTES - expandedBytes);
+      found = result.tables;
+      expandedBytes += result.expandedBytes;
+    } else {
+      found = singleTable(file.name, new TextDecoder().decode(bytes));
+    }
     Object.assign(tables, found);
     perFile.push({ name: file.name, tables: Object.keys(found).length });
   }
@@ -170,7 +190,6 @@ export async function importGadgetbridgeFiles(files, timezone, offsetMinutes) {
   if (!days.length && !built.records.length) throw new Error("No readable Gadgetbridge tables were found in these files");
   const cross = built.crossCheck ? ` · zone load vs device load ${built.crossCheck.medianRatio}x over ${built.crossCheck.pairs} sessions` : "";
   const result = await saveImport({
-    label: files.map((file) => file.name).join(", ").slice(0, 120),
     days,
     workouts: built.records,
     message: `${timezone} · ${days.length} days, ${built.records.length} workouts${cross}`.slice(0, 200),

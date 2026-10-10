@@ -6,6 +6,9 @@
 // only hands back rows and numbers.
 
 const DECODER = new TextDecoder();
+const MAX_ZIP_ENTRIES = 512;
+const MAX_ZIP_ENTRY_BYTES = 128_000_000;
+const MAX_ZIP_EXPANDED_BYTES = 256_000_000;
 
 export type Table = { headers: string[]; rows: string[][] };
 
@@ -38,18 +41,43 @@ export function parseCsv(text: string): Table {
   return { headers: splitRow(lines[0]), rows: lines.slice(1).map(splitRow) };
 }
 
-async function inflateRaw(raw: Uint8Array): Promise<Uint8Array> {
+async function inflateRaw(raw: Uint8Array, maxOutputBytes: number): Promise<Uint8Array> {
   const body = new ArrayBuffer(raw.byteLength);
   new Uint8Array(body).set(raw);
   const stream = new Response(body).body!.pipeThrough(new DecompressionStream("deflate-raw"));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let outputBytes = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      outputBytes += value.byteLength;
+      if (outputBytes > maxOutputBytes) throw new Error("ZIP entry expands beyond the allowed import size");
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  }
+
+  const output = new Uint8Array(outputBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    output.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return output;
 }
 
 const tableName = (path: string) =>
   String(path.split("/").pop() || "").replace(/\.csv$/i, "").replace(/\.zip$/i, "").toUpperCase();
 
 // Every CSV in the archive, keyed by table name.
-export async function readZip(bytes: Uint8Array): Promise<Record<string, string>> {
+export async function readZip(
+  bytes: Uint8Array,
+  maxExpandedBytes = MAX_ZIP_EXPANDED_BYTES,
+): Promise<{ tables: Record<string, string>; expandedBytes: number }> {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let eocd = -1;
   for (let i = bytes.length - 22; i >= 0 && i > bytes.length - 66000; i--) {
@@ -57,22 +85,53 @@ export async function readZip(bytes: Uint8Array): Promise<Record<string, string>
   }
   if (eocd < 0) throw new Error("That file is not a zip archive");
 
+  const entryCount = view.getUint16(eocd + 10, true);
+  const centralDirectorySize = view.getUint32(eocd + 12, true);
+  const centralDirectoryOffset = view.getUint32(eocd + 16, true);
+  const centralDirectoryEnd = centralDirectoryOffset + centralDirectorySize;
+  if (entryCount > MAX_ZIP_ENTRIES) throw new Error("ZIP archive contains too many entries");
+  if (centralDirectoryOffset > eocd || centralDirectoryEnd > eocd || centralDirectoryEnd > bytes.length) {
+    throw new Error("ZIP archive has an invalid directory");
+  }
+
   const out: Record<string, string> = {};
-  let p = view.getUint32(eocd + 16, true);
-  for (let i = 0; i < view.getUint16(eocd + 10, true); i++) {
+  let expandedBytes = 0;
+  let p = centralDirectoryOffset;
+  for (let i = 0; i < entryCount; i++) {
+    if (p + 46 > centralDirectoryEnd || view.getUint32(p, true) !== 0x02014b50) {
+      throw new Error("ZIP archive has an invalid directory entry");
+    }
     const nameLen = view.getUint16(p + 28, true);
     const extraLen = view.getUint16(p + 30, true);
     const commentLen = view.getUint16(p + 32, true);
+    const flags = view.getUint16(p + 8, true);
     const method = view.getUint16(p + 10, true);
     const csize = view.getUint32(p + 20, true);
+    const usize = view.getUint32(p + 24, true);
     const name = DECODER.decode(bytes.subarray(p + 46, p + 46 + nameLen));
     const local = view.getUint32(p + 42, true);
+    const nextEntry = p + 46 + nameLen + extraLen + commentLen;
+    if (nextEntry > centralDirectoryEnd) throw new Error("ZIP archive has an invalid directory entry");
+    if (flags & 1) throw new Error("Encrypted ZIP entries are not supported");
+    if (method !== 0 && method !== 8) throw new Error("ZIP compression method is not supported");
+    if (usize > MAX_ZIP_ENTRY_BYTES || usize > maxExpandedBytes - expandedBytes) {
+      throw new Error("ZIP archive expands beyond the allowed import size");
+    }
+    if (local + 30 > centralDirectoryOffset || view.getUint32(local, true) !== 0x04034b50) {
+      throw new Error("ZIP archive has an invalid file header");
+    }
     const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+    if (start > centralDirectoryOffset || csize > centralDirectoryOffset - start) {
+      throw new Error("ZIP archive has an invalid file size");
+    }
     const raw = bytes.subarray(start, start + csize);
-    out[tableName(name)] = DECODER.decode(method === 0 ? raw : await inflateRaw(raw));
-    p += 46 + nameLen + extraLen + commentLen;
+    const content = method === 0 ? raw : await inflateRaw(raw, usize);
+    if (content.byteLength !== usize) throw new Error("ZIP entry size does not match its directory record");
+    expandedBytes += content.byteLength;
+    out[tableName(name)] = DECODER.decode(content);
+    p = nextEntry;
   }
-  return out;
+  return { tables: out, expandedBytes };
 }
 
 // A loose CSV upload becomes a one-table dump, keyed by the file's own name.
