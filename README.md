@@ -26,9 +26,9 @@ Aether Health is a _privacy-first_ dashboard that turns your **Huawei watch data
 
 <div align="center">
 
-| Home | Activity | Biological Age |
-| :---: | :---: | :---: |
-| <img src="images/home.png" width="450"> | <img src="images/activity.png" width="450"> | <img src="images/bioage.png" width="450"> |
+| Activity | Biological Age |
+| :---: | :---: |
+| <img src="images/activity.png" width="450"> | <img src="images/bioage.png" width="450"> |
 
 <sub>Screenshots use demo data (demo_mode=on in settings).</sub>
 
