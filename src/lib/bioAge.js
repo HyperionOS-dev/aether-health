@@ -62,6 +62,14 @@ function dayAerobicZones(d, workouts, rhr) {
 // (Z2 + Z3) + 2*(Z4 + Z5) aerobic weighting.
 const aerobicOf = (z) => (z[1] || 0) + (z[2] || 0) + 2 * ((z[3] || 0) + (z[4] || 0));
 
+// Rank among measured factors by years shown: 1 = biggest drag (most years older), last =
+// biggest help. Excluded factors have no rank.
+function withRank(list) {
+  const active = list.filter((f) => !f.excluded).sort((a, b) => b.yearsShown - a.yearsShown);
+  const rankOf = new Map(active.map((f, i) => [f.id, i + 1]));
+  return list.map((f) => ({ ...f, rank: rankOf.get(f.id) ?? null }));
+}
+
 export function computeBioAge({ metrics, workouts, age }) {
   const windowData = (metrics || []).slice(-WINDOW_DAYS);
   const workoutsByDate = new Map();
@@ -114,6 +122,34 @@ export function computeBioAge({ metrics, workouts, age }) {
   const unlocked = totalDays >= MIN_DAYS_UNLOCK && activeFactors.length >= MIN_FACTORS_UNLOCK;
   const earlyEstimate = conf < 1;
 
+  // Last-7-day value and direction per factor, measured against the full window. The
+  // direction is relative to the window's own value, with a small dead band so noise reads
+  // as "stable". Aggregates only: no dates or per-day rows leave this function.
+  const sleepSel = (arr) => mean(arr.map(sleepHours).filter(isNum));
+  const last7 = windowData.slice(-7);
+  const sevenDay = (sel) => {
+    const w = sel(windowData), l = sel(last7);
+    if (l == null || w == null) return null;
+    return { value: l, window: w };
+  };
+  const recentFor = {
+    sleep: sevenDay(sleepSel),
+    consistency: sevenDay((arr) => mean(arr.map((d) => d.sleep_consistency).filter(isNum))),
+    rhr: sevenDay((arr) => mean(arr.map((d) => d.resting_hr).filter(isNum))),
+    steps: sevenDay((arr) => mean(arr.map((d) => d.steps).filter(isNum))),
+  };
+  // "Improving" means the 7-day value moved closer to the factor's target (lower is better
+  // for RHR is handled by the same distance test). Within 3% of target the change is "stable".
+  const directionFor = (id, r) => {
+    if (!r) return null;
+    const target = FACTORS[id].target;
+    const band = 0.03 * target;
+    const before = Math.abs(r.window - target);
+    const after = Math.abs(r.value - target);
+    if (Math.abs(after - before) <= band) return "stable";
+    return after < before ? "improving" : "worsening";
+  };
+
   // Last-30-day vs full-window trend per factor.
   const last30 = windowData.slice(-30);
   const trendFor = (sel) => {
@@ -121,7 +157,6 @@ export function computeBioAge({ metrics, workouts, age }) {
     if (l == null || w == null) return null;
     return { last30: l, window: w, dir: l > w ? "up" : l < w ? "down" : "flat" };
   };
-  const sleepSel = (arr) => mean(arr.map(sleepHours).filter(isNum));
   const trends = {
     sleep: trendFor(sleepSel),
     rhr: trendFor((arr) => mean(arr.map((d) => d.resting_hr).filter(isNum))),
@@ -139,11 +174,14 @@ export function computeBioAge({ metrics, workouts, age }) {
     confidence: conf,
     bioAge: unlocked && isNum(age) ? Math.round(age + totalYears) : null,
     totalYears: unlocked ? Math.round(totalYears * 10) / 10 : null,
-    factors: factors.map((f) => ({
+    factors: withRank(factors.map((f) => ({
       ...f,
       yearsShown: f.excluded ? 0 : Math.round(f.years * conf * 100) / 100,
       trend: trends[f.id] || null,
-    })),
+      recent7: recentFor[f.id]
+        ? { value: recentFor[f.id].value, direction: directionFor(f.id, recentFor[f.id]) }
+        : null,
+    }))),
   };
 }
 
