@@ -12,8 +12,9 @@ const KEY_STORE = "aether.bioage.geminiKey";
 const MODEL_STORE = "aether.bioage.geminiModel";
 const ACK_STORE = "aether.bioage.privacyAck";
 const DEFAULT_MODEL = "gemini-3.8-flash";
-// v2: bumped so replies truncated by the old 220/1024-token caps are not served from cache.
-const CACHE_STORE = "aether.bioage.aiCache.v2";
+// v3: bumped with the 3-bullet prompt and the trend/rank payload, so replies written under the
+// old prompt are never served for the new one. (v2 cleared the old truncated-reply cache.)
+const CACHE_STORE = "aether.bioage.aiCache.v3";
 const MIN_CALL_GAP_MS = 10000;
 
 const endpoint = (model) =>
@@ -34,8 +35,9 @@ export const geminiSettings = {
 
 export const MIN_CALL_GAP = MIN_CALL_GAP_MS;
 
-// Privacy-safe payload: integer age, window length, factor values/years/targets.
-// No dates, raw HR streams, workout names, name, or birth year.
+// Privacy-safe payload: integer age, window length, factor aggregates only. Each factor
+// carries its window average, a 7-day average and direction, a 30-day average, rank, and
+// target. No dates, raw HR streams, per-day rows, workout names, name, or birth year.
 export function buildPayload(result) {
   return {
     configVersion: BIO_AGE_CONFIG_VERSION,
@@ -47,10 +49,14 @@ export function buildPayload(result) {
       .filter((f) => !f.excluded)
       .map((f) => ({
         label: f.label,
+        rank: f.rank,
         value: f.value != null ? Math.round(f.value * 100) / 100 : null,
         unit: f.unit,
         target: f.target,
         years: f.yearsShown,
+        last7: f.recent7 ? Math.round(f.recent7.value * 100) / 100 : null,
+        last7Direction: f.recent7?.direction ?? null,
+        last30: f.trend ? Math.round(f.trend.last30 * 100) / 100 : null,
       })),
   };
 }
@@ -63,10 +69,15 @@ export function payloadHash(payload) {
 }
 
 const SYSTEM_PROMPT =
-  "You explain a lifestyle-based biological-age estimate. Use ONLY the numbers provided; do not invent values. " +
-  "Respond in <=110 words, plain language. Name the single biggest help and the single biggest drag, each with its years value. " +
-  "Give one concrete, safe, non-medical suggestion for the biggest drag. Never diagnose, never give medical advice, " +
-  "and never claim to measure true biological age.";
+  "You explain a lifestyle-based biological-age estimate from the JSON provided. " +
+  "Reply with exactly 3 short bullets, plain language, under 120 words total: " +
+  "(1) what is working and why, citing a factor's value; " +
+  "(2) the one change with the most impact, targeting the rank-1 drag and its last7 or last30 trend; " +
+  "(3) how to measure that change next week, using the same factor. " +
+  "Use the numbers in the JSON for the user. You may cite well-established general reference ranges " +
+  "(for example adult sleep 7-9 hours), but never introduce any other new number about the user. " +
+  "Do not restate the years values, since the app already shows them. " +
+  "Never diagnose, never give medical advice, and never claim to measure true biological age.";
 
 export async function callGemini(payload, { signal } = {}) {
   const key = geminiSettings.getKey();
@@ -77,7 +88,7 @@ export async function callGemini(payload, { signal } = {}) {
   const body = {
     systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
     contents: [{ parts: [{ text: JSON.stringify(payload) }] }],
-    // max_output_tokens counts thinking tokens plus visible text, so a small cap truncates
+    // max_output_tokens counts thinking tokens plus visible text, so a small cap truncates replies.
     // the reply (surfaced as TRUNCATED). 4096 leaves ample headroom for the <=110-word answer.
     generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
   };
