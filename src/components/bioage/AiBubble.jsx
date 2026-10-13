@@ -126,8 +126,9 @@ function KeySettings({ onClose, onSaved }) {
       </div>
       <label className="flex items-start gap-2 text-[11px] text-muted-foreground">
         <input type="checkbox" checked={ack} onChange={(e) => setAck(e.target.checked)} className="mt-0.5" />
-        <span>I understand: free Gemini keys may let Google use prompts to improve its products and humans may review them.</span>
+        <span>I understand: this sends health summaries (averages, a 7-day trend and a 30-day trend, with no dates or daily records) to Google's Gemini. Free-tier keys may let Google use these prompts to improve its products, and humans may review them.</span>
       </label>
+      <p className="text-[10px] text-muted-foreground">This is a lifestyle estimate for tracking trends. It is not medical advice and does not measure your true biological age. Talk to a clinician about any health decision.</p>
       <p className="text-[10px] text-muted-foreground">Stored only in this browser. Never sent to the app's backend or stored in the database.</p>
       <div className="flex gap-2">
         <button onClick={save} disabled={!ack || !key.trim()} className="flex-1 rounded-lg bg-sleep px-3 py-2 text-sm font-semibold text-background disabled:opacity-40">Save</button>
