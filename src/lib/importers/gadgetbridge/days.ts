@@ -12,7 +12,14 @@
 
 import { zoneForHr } from "@/lib/scoring/scores";
 import { SCORING_CONFIG } from "@/lib/scoring/config";
-import { col, localClock, localDate, localIso, localMinutes, metric, saneHeartRate, tableOf, timestampMs } from "./tables.ts";
+import { col, localClock, localDate, localIso, localMinutes, metric, saneHeartRate, tableOf, timestampMs } from "./tables";
+
+// A sleep-stats value that counts: the dump writes -1 for "not reported", and a nap or
+// daytime row is all zeros, so both are absent. Range-checked against plausible values.
+const reported = (row: string[], i: number, lo: number, hi: number): number | null => {
+  const v = metric(row, i);
+  return v != null && v > 0 && v >= lo && v <= hi ? v : null;
+};
 
 const SOURCE = "gadgetbridge_import";
 const NAP_GAP_MIN = 90; // wider than this separates a nap from the night
@@ -163,20 +170,52 @@ export function buildDays(
     }
   }
 
-  // --- per-night summary: HRV and blood oxygen, held by the night's own end date
+  // --- per-night summary: respiratory rate, blood oxygen. The summary has one row per
+  // sleep session, naps and daytime rows included. Only the night is kept: for each
+  // date, the longest session whose wake time falls on that date. Its bed and wake
+  // timestamps must both be real, so a zero-filled nap row creates no day at all.
+  // Every field is read from that chosen row only, and -1 or 0 counts as not reported.
   const stats = tableOf(tables, "HUAWEI_SLEEP_STATS_SAMPLE");
   if (stats) {
+    const iBed = col(stats.headers, "bedtime");
     const iRise = col(stats.headers, "risingtime");
     const iO2 = col(stats.headers, "avgoxygensaturation");
+    const iBreath = col(stats.headers, "avgbreathrate");
+    const iBreathLo = col(stats.headers, "minbreathratebaseline");
+    const iBreathHi = col(stats.headers, "maxbreathratebaseline");
+    const nights = new Map<string, { length: number; row: string[] }>();
     for (const row of stats.rows) {
-      const ms = Date.parse(row[iRise] ?? "");
-      if (!Number.isFinite(ms)) continue;
-      const day = get(localDate(localMinutes(ms, timezone, fallbackOffset)));
+      const rise = timestampMs(row[iRise]);
+      const bed = timestampMs(row[iBed]);
+      if (!Number.isFinite(rise) || !Number.isFinite(bed) || rise <= bed) continue;
+      const wakeLocal = localMinutes(rise, timezone, fallbackOffset);
+      // The night is the session that ends in the morning. An afternoon or evening
+      // session is a nap, and it never supplies the day's values.
+      if (((wakeLocal % 1440) + 1440) % 1440 >= 12 * 60) continue;
+      const date = localDate(wakeLocal);
+      const length = rise - bed;
+      const held = nights.get(date);
+      if (!held || length > held.length) nights.set(date, { length, row });
+    }
+    for (const [date, { row }] of nights) {
+      const day = get(date);
 
-      const o2 = metric(row, iO2);
-      if (o2 != null && o2 >= 50 && o2 <= 100 && day.spo2 == null) {
+      const o2 = reported(row, iO2, 50, 100);
+      if (o2 != null && day.spo2 == null) {
         day.spo2 = Math.round(o2);
         day.sources.spo2 = "sleep_stats";
+      }
+
+      const breath = reported(row, iBreath, 5, 40);
+      if (breath != null) {
+        day.respiratory_rate = Math.round(breath);
+        day.sources.respiratory_rate = "sleep_stats";
+      }
+      const breathLo = reported(row, iBreathLo, 5, 40);
+      const breathHi = reported(row, iBreathHi, 5, 40);
+      if (breathLo != null && breathHi != null && breathLo <= breathHi) {
+        day.respiratory_rate_baseline_min = Math.round(breathLo);
+        day.respiratory_rate_baseline_max = Math.round(breathHi);
       }
     }
   }

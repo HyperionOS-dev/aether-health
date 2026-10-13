@@ -17,7 +17,7 @@ function correlation(rows) {
   return spreadX && spreadY ? covariance / Math.sqrt(spreadX * spreadY) : null;
 }
 
-function Stat({ label, value, unit }) {
+function Stat({ label, value, unit, caption = null }) {
   return (
     <div>
       <Label>{label}</Label>
@@ -25,6 +25,7 @@ function Stat({ label, value, unit }) {
         {value ?? "--"}
         {value != null && <span className="ml-1 text-xs font-medium text-muted-foreground">{unit}</span>}
       </p>
+      {caption && <p className="mt-0.5 text-[10px] text-muted-foreground">{caption}</p>}
     </div>
   );
 }
@@ -58,7 +59,12 @@ export default function RecoveryCard({ day, history = [] }) {
   const latestValue = (key) => [...recent].reverse().find((row) => Number.isFinite(row[key]))?.[key] ?? null;
   const rhr = Number.isFinite(day?.resting_hr) ? day.resting_hr : latestValue("resting_hr");
   const skinTemp = Number.isFinite(day?.skin_temp) ? day.skin_temp : latestValue("skin_temp");
-  const respiratoryRate = Number.isFinite(day?.respiratory_rate) ? day.respiratory_rate : latestValue("respiratory_rate");
+  // Respiratory rate belongs to one night only, so it is never carried over from an
+  // earlier day: a day without its own night record shows "--".
+  const respiratoryRate = Number.isFinite(day?.respiratory_rate) ? day.respiratory_rate : null;
+  const respiratoryBaseline = Number.isFinite(day?.respiratory_rate_baseline_min) && Number.isFinite(day?.respiratory_rate_baseline_max)
+    ? `usual ${day.respiratory_rate_baseline_min}-${day.respiratory_rate_baseline_max}`
+    : null;
 
   async function saveRating(value) {
     if (!day?.date) return;
@@ -98,13 +104,11 @@ export default function RecoveryCard({ day, history = [] }) {
         </div>
         <span className="shrink-0 text-right font-display text-lg font-bold">{timeToFull}</span>
       </div>
-      {(rhr != null || skinTemp != null || respiratoryRate != null) && (
-        <div className="mt-4 grid grid-cols-3 gap-3 border-t border-hairline pt-4">
-          {rhr != null && <Stat label="RHR" value={rhr} unit="bpm" />}
-          {skinTemp != null && <Stat label="SKIN TEMP" value={skinTemp} unit="°C" />}
-          {respiratoryRate != null && <Stat label="RESP. RATE" value={respiratoryRate} unit="rpm" />}
-        </div>
-      )}
+      <div className="mt-4 grid grid-cols-3 gap-3 border-t border-hairline pt-4">
+        {rhr != null && <Stat label="RHR" value={rhr} unit="bpm" />}
+        {skinTemp != null && <Stat label="SKIN TEMP" value={skinTemp} unit="°C" />}
+        <Stat label="RESP. RATE" value={respiratoryRate} unit="br/min" caption={respiratoryBaseline} />
+      </div>
 
       {SHOW_RECOVERY_DETAILS && (
         <>
