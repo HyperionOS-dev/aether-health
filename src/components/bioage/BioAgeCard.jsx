@@ -7,6 +7,8 @@ import { DEMO_AGE } from "@/lib/demoData";
 import AgeDialog from "./AgeDialog";
 import AgeBlob from "./AgeBlob";
 import CollectingChips from "./CollectingChips";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { CONFIDENCE_FULL_DAYS } from "@/lib/bioAgeConfig";
 import FactorRow from "./FactorRow";
 import AiBubble from "./AiBubble";
 
@@ -57,9 +59,30 @@ export default function BioAgeCard({ metrics, workouts }) {
       </div>
 
       {result?.unlocked && (
-        <div className="flex items-center justify-center gap-3 text-xs text-muted-foreground">
-          <span>Estimate · {result.days} days · {result.factorCount} factors</span>
-          {result.earlyEstimate && <span className="rounded bg-surface px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider">Early estimate</span>}
+        <div className="flex flex-wrap items-center justify-center gap-2">
+          <CollectingChips
+            unlocked
+            days={result.days}
+            factorCount={result.factorCount}
+            factors={result.factors}
+          />
+          {result.earlyEstimate && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  className="rounded-full border border-hairline bg-surface px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  Early estimate
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="center" className="w-64 rounded-xl border-hairline bg-card p-3 text-xs text-card-foreground">
+                <p>
+                  {result.days} of {CONFIDENCE_FULL_DAYS} days so far. Years are scaled down until you reach {CONFIDENCE_FULL_DAYS} days.
+                </p>
+              </PopoverContent>
+            </Popover>
+          )}
         </div>
       )}
 
