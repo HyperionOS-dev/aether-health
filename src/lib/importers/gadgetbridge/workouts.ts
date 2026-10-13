@@ -84,7 +84,7 @@ function buildStreams(data: { headers: string[]; rows: string[][] } | null, time
   const iGtb = col(data.headers, "gtb");
   for (const row of data.rows) {
     const id = String(row[iId] ?? "");
-    const ms = Date.parse(row[iTs] ?? "");
+    const ms = timestampMs(row[iTs]);
     if (!id || !Number.isFinite(ms)) continue;
     if (!streams.has(id)) streams.set(id, []);
     streams.get(id)!.push({

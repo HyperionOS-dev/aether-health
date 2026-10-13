@@ -1,6 +1,9 @@
 import { buildDays } from "@/lib/importers/gadgetbridge/days";
+import { detectGadgetbridgeSource, readTables } from "@/lib/importers/gadgetbridge/sqlite";
 import { readZip, singleTable } from "@/lib/importers/gadgetbridge/tables";
 import { buildWorkouts, sessionSpans } from "@/lib/importers/gadgetbridge/workouts";
+import initSqlJs from "sql.js";
+import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import {
   finalizeDay,
   finalizeHealthDetailDay,
@@ -182,13 +185,17 @@ export async function importGadgetbridgeFiles(files, timezone, offsetMinutes) {
   let expandedBytes = 0;
   for (const file of files) {
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const zipped = bytes[0] === 0x50 && bytes[1] === 0x4b;
     let found;
-    if (zipped) {
-      const result = await readZip(bytes, MAX_ZIP_EXPANDED_BYTES - expandedBytes);
-      found = result.tables;
-      expandedBytes += result.expandedBytes;
+    if (detectGadgetbridgeSource(bytes)) {
+      const read = await readTables(bytes, {
+        load: initSqlJs,
+        wasmUrl: sqlWasmUrl,
+        maxExpandedBytes: MAX_ZIP_EXPANDED_BYTES - expandedBytes,
+      });
+      found = read.tables;
+      expandedBytes += read.expandedBytes;
     } else {
+      // Neither shape is one loose table file, so it is read on its own and keyed by name.
       found = singleTable(file.name, new TextDecoder().decode(bytes));
     }
     Object.assign(tables, found);

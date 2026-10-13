@@ -76,7 +76,7 @@ npm run build
 This creates a static `dist/` folder you can host anywhere, like Cloudflare Pages. Add your site's domain to **Firebase Authentication → Settings → Authorized domains**, or sign-in won't work there.
 
 ### 📥 Importing Your Data
-Export your data from **Gadgetbridge**, then upload the zip in the Sync panel. Want to look around first? Add `?demo=1` to the URL and it loads fake data that never gets saved.
+Export your data from **Gadgetbridge**, then upload it in the Sync panel — either the zip of table files, the database file itself (both are read in your browser), or an individual table CSV. Want to look around first? Add `?demo=1` to the URL and it loads fake data that never gets saved.
 
 # 🛠️ Built With
 
@@ -84,7 +84,7 @@ React · JavaScript · TypeScript · Firebase (Auth + Firestore)
 
 # 🔒 Privacy
 
-- Imports are parsed **in your browser**. Your export file is never uploaded, only the resulting records are saved.
+- Imports are parsed **in your browser**. Your export file is never uploaded, only the resulting records are saved. A Gadgetbridge database is read with SQLite compiled to WebAssembly (sql.js), which runs locally in your browser; parsing it sends nothing anywhere.
 - Records are stored in **Firestore under your account**, and the security rules stop other accounts from reading or writing them.
 - Your Gemini key stays in your browser's `localStorage`. Only your age and score numbers get sent to Gemini, never dates or raw heart rate.
 - Free Gemini keys can be used by Google to improve its products, so skip the AI bubble if that bugs you.

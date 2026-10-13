@@ -54,9 +54,9 @@ export default function GadgetbridgeForm() {
   return (
     <div className="space-y-4">
       <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
-        <li>In Gadgetbridge, export the database to a folder of table files.</li>
-        <li>Zip that folder — no need to open or edit it.</li>
-        <li>Upload the zip here, with the timezone your watch records in.</li>
+        <li>In Gadgetbridge, export the database — either the table files or the database file itself.</li>
+        <li>Zip the table folder, or keep the database as it is — no need to open or edit either.</li>
+        <li>Upload it here, with the timezone your watch records in.</li>
       </ol>
       <div className="space-y-2">
         <label className="text-xs font-medium text-muted-foreground">Timezone of your watch data</label>
@@ -81,11 +81,11 @@ export default function GadgetbridgeForm() {
         className={`flex cursor-pointer flex-col items-center gap-2 rounded-2xl border border-dashed px-4 py-8 text-center transition-colors ${dragging ? "border-sleep bg-sleep/10" : "border-hairline bg-surface hover:border-sleep"}`}
       >
         <Upload className={`h-6 w-6 ${dragging ? "text-sleep" : "text-muted-foreground"}`} />
-        <span className="text-sm font-medium">{dragging ? "Drop your export here" : "Choose or drag the table export"}</span>
-        <span className="text-xs text-muted-foreground">ZIP of table files, or individual CSV tables</span>
+        <span className="text-sm font-medium">{dragging ? "Drop your export here" : "Choose or drag the export"}</span>
+        <span className="text-xs text-muted-foreground">ZIP of table files, the database file, or single CSV tables</span>
         <input
           type="file"
-          accept=".zip,.csv"
+          accept=".zip,.csv,.db"
           multiple
           className="hidden"
           onChange={(e) => addFiles(e.target.files)}

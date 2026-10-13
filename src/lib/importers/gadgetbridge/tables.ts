@@ -8,15 +8,28 @@
 const DECODER = new TextDecoder();
 const MAX_ZIP_ENTRIES = 512;
 const MAX_ZIP_ENTRY_BYTES = 128_000_000;
-const MAX_ZIP_EXPANDED_BYTES = 256_000_000;
+export const MAX_ZIP_EXPANDED_BYTES = 256_000_000;
 
 export type Table = { headers: string[]; rows: string[][] };
 
+// One timestamp column can arrive in more than one shape, and the shape differs per
+// source: the table-file CSV writes a bare calendar date for a row that carries no time
+// of day, and the sqlite database writes plain epoch seconds. All of them normalise here
+// so every caller sees milliseconds: values at or above 1e11 are treated as already in
+// milliseconds, anything smaller as seconds.
+//
+// Epoch values at or below zero are junk rows the dump leaves behind (a 0 stamp and a
+// -29740 stamp both sit in HUAWEI_ACTIVITY_SAMPLE), and they stay NaN: the importer
+// drops a day whose timestamp is NaN, so importing one would file a 1970 date.
 export function timestampMs(value: unknown): number {
   const raw = String(value ?? "").trim();
   if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(raw)) return Date.parse(raw);
+  // A bare calendar date is midnight UTC on that day, the instant Gadgetbridge stores
+  // for it, so a date-only row lands on the right local day instead of being lost.
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return Date.parse(raw + "T00:00:00Z");
   const epoch = Number(raw);
-  return Number.isFinite(epoch) && Math.abs(epoch) >= 100_000_000_000 ? epoch : NaN;
+  if (!Number.isFinite(epoch) || epoch <= 0) return NaN;
+  return epoch >= 100_000_000_000 ? epoch : Math.round(epoch * 1000);
 }
 
 // This dump's missing-value sentinel, present in every metric column.
@@ -80,11 +93,17 @@ async function inflateRaw(raw: Uint8Array, maxOutputBytes: number): Promise<Uint
 const tableName = (path: string) =>
   String(path.split("/").pop() || "").replace(/\.csv$/i, "").replace(/\.zip$/i, "").toUpperCase();
 
-// Every CSV in the archive, keyed by table name.
-export async function readZip(
+// One entry in the archive: its full path, its decoded text, and its raw bytes.
+export type ZipEntry = { name: string; content: string; bytes: Uint8Array };
+
+// The zip central directory is the archive's table of contents, so every entry is
+// length-checked against it before a byte is read. Text and raw bytes are both handed
+// back because callers want different things: the table-file layout decodes every CSV,
+// while the database layout has to pass a nested file to the sqlite reader untouched.
+async function* walkZipEntries(
   bytes: Uint8Array,
-  maxExpandedBytes = MAX_ZIP_EXPANDED_BYTES,
-): Promise<{ tables: Record<string, string>; expandedBytes: number }> {
+  maxExpandedBytes: number,
+): AsyncGenerator<ZipEntry, number, void> {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   let eocd = -1;
   for (let i = bytes.length - 22; i >= 0 && i > bytes.length - 66000; i--) {
@@ -101,7 +120,6 @@ export async function readZip(
     throw new Error("ZIP archive has an invalid directory");
   }
 
-  const out: Record<string, string> = {};
   let expandedBytes = 0;
   let p = centralDirectoryOffset;
   for (let i = 0; i < entryCount; i++) {
@@ -135,10 +153,37 @@ export async function readZip(
     const content = method === 0 ? raw : await inflateRaw(raw, usize);
     if (content.byteLength !== usize) throw new Error("ZIP entry size does not match its directory record");
     expandedBytes += content.byteLength;
-    out[tableName(name)] = DECODER.decode(content);
+    yield { name, content: DECODER.decode(content), bytes: content };
     p = nextEntry;
   }
+  return expandedBytes;
+}
+
+// Every CSV in the archive, keyed by table name.
+export async function readZip(
+  bytes: Uint8Array,
+  maxExpandedBytes = MAX_ZIP_EXPANDED_BYTES,
+): Promise<{ tables: Record<string, string>; expandedBytes: number }> {
+  const out: Record<string, string> = {};
+  let expandedBytes = 0;
+  for await (const entry of walkZipEntries(bytes, maxExpandedBytes)) {
+    expandedBytes += entry.bytes.byteLength;
+    out[tableName(entry.name)] = entry.content;
+  }
   return { tables: out, expandedBytes };
+}
+
+// One matching entry, still raw bytes. The database layout keeps its sqlite file nested
+// inside the archive, so that file has to arrive at the sqlite reader undecoded.
+export async function readZipEntryBytes(
+  bytes: Uint8Array,
+  match: (entry: ZipEntry) => boolean,
+  maxExpandedBytes = MAX_ZIP_EXPANDED_BYTES,
+): Promise<Uint8Array | null> {
+  for await (const entry of walkZipEntries(bytes, maxExpandedBytes)) {
+    if (match(entry)) return entry.bytes;
+  }
+  return null;
 }
 
 // A loose CSV upload becomes a one-table dump, keyed by the file's own name.

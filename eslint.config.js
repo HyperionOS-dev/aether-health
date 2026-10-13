@@ -5,6 +5,19 @@ import pluginReactHooks from "eslint-plugin-react-hooks";
 import pluginUnusedImports from "eslint-plugin-unused-imports";
 
 export default [
+  // src/lib is JavaScript and TypeScript with no lint block of its own. This adds only undefined-
+  // variable detection for its .js/.mjs files; .ts needs typescript-eslint, which is not installed.
+  {
+    files: ["src/lib/**/*.{js,mjs}"],
+    languageOptions: {
+      globals: { ...globals.browser, ...globals.node },
+      ecmaVersion: 2022,
+      sourceType: "module",
+    },
+    rules: {
+      "no-undef": "error",
+    },
+  },
   {
     files: [
       "src/components/**/*.{js,mjs,cjs,jsx}",
