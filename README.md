@@ -12,7 +12,6 @@ _Your Watch Data. Finally Readable._
 
 ![GitHub Repo stars](https://img.shields.io/github/stars/HyperionOS-dev/aether-health?style=for-the-badge&color=gold)
 ![GitHub License](https://img.shields.io/github/license/HyperionOS-dev/aether-health?style=for-the-badge&color=%23C9B5E8)
-![GitHub Tag](https://img.shields.io/github/v/tag/HyperionOS-dev/aether-health?include_prereleases&sort=semver&style=for-the-badge&label=Version&color=Lightgreen)
 
 </h2>
 
