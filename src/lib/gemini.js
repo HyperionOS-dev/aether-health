@@ -12,7 +12,8 @@ const KEY_STORE = "aether.bioage.geminiKey";
 const MODEL_STORE = "aether.bioage.geminiModel";
 const ACK_STORE = "aether.bioage.privacyAck";
 const DEFAULT_MODEL = "gemini-3.8-flash";
-const CACHE_STORE = "aether.bioage.aiCache";
+// v2: bumped so replies truncated by the old 220/1024-token caps are not served from cache.
+const CACHE_STORE = "aether.bioage.aiCache.v2";
 const MIN_CALL_GAP_MS = 10000;
 
 const endpoint = (model) =>
@@ -76,21 +77,28 @@ export async function callGemini(payload, { signal } = {}) {
   const body = {
     systemInstruction: { parts: [{ text: SYSTEM_PROMPT }] },
     contents: [{ parts: [{ text: JSON.stringify(payload) }] }],
-    generationConfig: { temperature: 0.3, maxOutputTokens: 220 },
+    // max_output_tokens counts thinking tokens plus visible text, so a small cap truncates
+    // the reply (surfaced as TRUNCATED). 4096 leaves ample headroom for the <=110-word answer.
+    generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
   };
 
   let res;
-  try {
-    res = await fetch(endpoint(model), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify(body),
-      signal,
-    });
-  } catch (e) {
-    if (e.name === "AbortError") throw e;
-    // A fetch failure while online is typically a CORS/network block.
-    throw new Error(navigator.onLine === false ? "OFFLINE" : "BLOCKED");
+  // 503 = Google temporarily overloaded; retry once after a short pause before falling back.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      res = await fetch(endpoint(model), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify(body),
+        signal,
+      });
+    } catch (e) {
+      if (e.name === "AbortError") throw e;
+      // A fetch failure while online is typically a CORS/network block.
+      throw new Error(navigator.onLine === false ? "OFFLINE" : "BLOCKED");
+    }
+    if (res.status !== 503 || attempt === 2) break;
+    await new Promise((r) => setTimeout(r, 1500));
   }
 
   if (res.status === 429) throw new Error("QUOTA");
@@ -98,7 +106,10 @@ export async function callGemini(payload, { signal } = {}) {
   if (!res.ok) throw new Error("HTTP_" + res.status);
 
   const data = await res.json();
-  const text = (data?.candidates?.[0]?.content?.parts || [])
+  const candidate = data?.candidates?.[0];
+  // Never show a cut-off sentence: a MAX_TOKENS stop falls back to the local estimate.
+  if (candidate?.finishReason === "MAX_TOKENS") throw new Error("TRUNCATED");
+  const text = (candidate?.content?.parts || [])
     .map((p) => p.text || "")
     .join("")
     .trim();
@@ -137,6 +148,8 @@ export function friendlyError(code) {
     case "QUOTA": return "Gemini quota reached (429) — showing a local estimate.";
     case "INVALID_KEY": return "Gemini rejected the key — showing a local estimate.";
     case "BLOCKED": return "Gemini blocked this browser request (CORS/network) — showing a local estimate.";
-    default: return "Couldn't reach Gemini — showing a local estimate.";
+    case "EMPTY": return "Gemini returned no text — showing a local estimate.";
+    case "TRUNCATED": return "Gemini's reply was cut short — showing a local estimate.";
+    default: return `Couldn't reach Gemini (${code || "unknown"}) — showing a local estimate.`;
   }
 }
