@@ -2,6 +2,7 @@ import { buildDays } from "@/lib/importers/gadgetbridge/days";
 import { detectGadgetbridgeSource, readTables } from "@/lib/importers/gadgetbridge/sqlite";
 import { readZip, singleTable } from "@/lib/importers/gadgetbridge/tables";
 import { buildWorkouts, sessionSpans } from "@/lib/importers/gadgetbridge/workouts";
+import { buildFitWorkouts, findFitDuplicates, isFit } from "@/lib/importers/gadgetbridge/fit";
 import initSqlJs from "sql.js";
 import sqlWasmUrl from "sql.js/dist/sql-wasm.wasm?url";
 import {
@@ -181,10 +182,18 @@ export async function importGadgetbridgeFiles(files, timezone, offsetMinutes) {
   validateFiles(files);
   /** @type {Record<string, string>} */
   const tables = {};
+  /** @type {Uint8Array[]} */
+  const fitFiles = [];
   const perFile = [];
   let expandedBytes = 0;
   for (const file of files) {
     const bytes = new Uint8Array(await file.arrayBuffer());
+    // A FIT activity file carries workouts only, so it is kept aside and read once the resting heart rate is known.
+    if (isFit(bytes)) {
+      fitFiles.push(bytes);
+      perFile.push({ name: file.name, tables: 0 });
+      continue;
+    }
     let found;
     if (detectGadgetbridgeSource(bytes)) {
       const read = await readTables(bytes, {
@@ -205,13 +214,17 @@ export async function importGadgetbridgeFiles(files, timezone, offsetMinutes) {
   const days = buildDays(tables, timezone, offsetMinutes, spans).slice(-MAX_DAYS);
   const restingByDate = Object.fromEntries(days.filter((day) => day.resting_hr != null).map((day) => [day.date, day.resting_hr]));
   const built = buildWorkouts(tables, timezone, offsetMinutes, restingByDate);
-  if (!days.length && !built.records.length) throw new Error("No readable Gadgetbridge tables were found in these files");
+  const fitWorkouts = fitFiles.flatMap((bytes) => buildFitWorkouts(bytes, timezone, offsetMinutes, restingByDate).records);
+  // A FIT session that matches a database workout is the same session, so the database copy is kept.
+  const { kept: fitKept, skipped: skippedDuplicates } = findFitDuplicates(built.records, fitWorkouts);
+  const workouts = [...built.records, ...fitKept];
+  if (!days.length && !workouts.length) throw new Error("No readable Gadgetbridge tables or FIT activities were found in these files");
   const cross = built.crossCheck ? ` · zone load vs device load ${built.crossCheck.medianRatio}x over ${built.crossCheck.pairs} sessions` : "";
   const result = await saveImport({
     days,
-    workouts: built.records,
-    message: `${timezone} · ${days.length} days, ${built.records.length} workouts${cross}`.slice(0, 200),
+    workouts,
+    message: `${timezone} · ${days.length} days, ${workouts.length} workouts${cross}`.slice(0, 200),
     extraLog: { timezone, cross_check: built.crossCheck || null },
   });
-  return { ...result, files: perFile, crossCheck: built.crossCheck };
+  return { ...result, files: perFile, crossCheck: built.crossCheck, skippedDuplicates };
 }

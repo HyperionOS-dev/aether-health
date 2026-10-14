@@ -5,6 +5,7 @@ import { Upload, Loader2, FileArchive, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { importGadgetbridgeFiles } from "@/lib/firebase/imports";
+import { toast } from "@/components/ui/use-toast";
 
 const FALLBACK_ZONES = ["Etc/UTC", "Asia/Riyadh", "Europe/London", "Europe/Berlin", "America/New_York", "Asia/Kolkata", "Asia/Tokyo", "Australia/Sydney"];
 
@@ -33,6 +34,17 @@ export default function GadgetbridgeForm() {
         updated: result.updated || 0,
         cross: result.crossCheck,
       });
+      const skipped = result.skippedDuplicates || [];
+      if (skipped.length) {
+        // Red, because a FIT file was not imported. The Toaster sits above the routes, so it survives the redirect below.
+        toast({
+          variant: "destructive",
+          title: "FIT skipped as a duplicate",
+          description: skipped.length === 1
+            ? `${skipped[0].activity} at ${skipped[0].start_time} on ${skipped[0].date} matched a database workout within 2 minutes. The database version was kept.`
+            : `${skipped.length} FIT workouts matched database workouts within 2 minutes. The database versions were kept.`,
+        });
+      }
       setFiles([]);
       navigate("/");
     } catch (e) {
@@ -82,10 +94,10 @@ export default function GadgetbridgeForm() {
       >
         <Upload className={`h-6 w-6 ${dragging ? "text-sleep" : "text-muted-foreground"}`} />
         <span className="text-sm font-medium">{dragging ? "Drop your export here" : "Choose or drag the export"}</span>
-        <span className="text-xs text-muted-foreground">ZIP of table files, the database file, or single CSV tables</span>
+        <span className="text-xs text-muted-foreground">ZIP of table files, the database file, single CSV tables, or a FIT activity file</span>
         <input
           type="file"
-          accept=".zip,.csv,.db"
+          accept=".zip,.csv,.db,.fit"
           multiple
           className="hidden"
           onChange={(e) => addFiles(e.target.files)}

@@ -23,7 +23,7 @@ import { activityLabel, isOutdoor } from "./sports.ts";
 import { col, localClock, localDate, localMinutes, metric, num, saneHeartRate, tableOf, timestampMs } from "./tables.ts";
 
 const GAP_CAP_MIN = 5; // a wider gap carries no zone credit — the watch was not recording
-const COVERAGE_MIN = 0.5; // FIX 9 method 1: half the samples must survive the sanity band
+export const COVERAGE_MIN = 0.5; // FIX 9 method 1: half the samples must survive the sanity band
 const SOURCE = "gadgetbridge_import";
 
 // Pace and cadence bands for a session whose heart rate is unusable. MET values follow
@@ -48,7 +48,7 @@ const GCT_MS = [50, 800];
 const VO_CM = [1, 30];
 const GTB_PCT = [30, 70];
 
-type Point = { t: number; hr: number | null; gct: number | null; vo: number | null; gtb: number | null };
+export type Point = { t: number; hr: number | null; gct: number | null; vo: number | null; gtb: number | null };
 
 const banded = (v: number | null, lo: number, hi: number) => (v != null && v >= lo && v <= hi ? v : null);
 const mean = (a: number[]) => (a.length ? Math.round((a.reduce((x, y) => x + y, 0) / a.length) * 10) / 10 : null);
@@ -57,7 +57,7 @@ const metForCadence = (spm: number) => (CADENCE_BANDS.find((b) => spm <= b.maxSp
 
 // Time in each zone across one workout's own trace, credited minute by minute with a
 // gap cap, exactly as the day's full trace is credited.
-function zoneMinutes(points: Point[], rhr: number): number[] {
+export function zoneMinutes(points: Point[], rhr: number): number[] {
   const zones = [0, 0, 0, 0, 0];
   let prev: number | null = null;
   let prevZone = -1;
@@ -134,7 +134,7 @@ export function pickMethod(coverage: number, distanceKm: number, steps: number, 
   return "none";
 }
 
-function strainFor(method: string, x: { zones: number[] | null; distanceKm: number; durationMin: number; steps: number }): number {
+export function strainFor(method: string, x: { zones: number[] | null; distanceKm: number; durationMin: number; steps: number }): number {
   if (method === "hr_zones" && x.zones) return strainFromZones(x.zones);
   if (method === "pace") return strainFromMet(x.durationMin, metForSpeed(x.distanceKm / (x.durationMin / 60)));
   if (method === "steps") return strainFromMet(x.durationMin, metForCadence(x.steps / x.durationMin));
