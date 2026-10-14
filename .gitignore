@@ -34,3 +34,7 @@ dist-ssr
 
 .env
 .vite
+
+# Local AI agent notes. Kept on disk for tooling, not published.
+AGENTS.md
+CLAUDE.md
