@@ -1,28 +1,14 @@
 import { useIsMobile } from "@/hooks/use-mobile";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Drawer, DrawerContent, DrawerHeader, DrawerTitle } from "@/components/ui/drawer";
-import { useState } from "react";
-import ImportForm from "./ImportForm";
-import GadgetbridgeForm from "./GadgetbridgeForm";
+import UnifiedImportForm from "./UnifiedImportForm";
 import ImportLogList from "./ImportLogList";
 
 export default function ImportPanel({ open, onOpenChange, logs }) {
   const isMobile = useIsMobile();
-  const [source, setSource] = useState("huawei");
   const body = (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-1 rounded-xl border border-hairline p-1">
-        {[["huawei", "Huawei Health"], ["gadgetbridge", "Gadgetbridge"]].map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setSource(id)}
-            className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${source === id ? "bg-secondary text-foreground" : "text-muted-foreground hover:text-foreground"}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {source === "huawei" ? <ImportForm /> : <GadgetbridgeForm />}
+      <UnifiedImportForm />
       <ImportLogList logs={logs} />
     </div>
   );
