@@ -11,6 +11,8 @@ import { BIO_AGE_CONFIG_VERSION } from "./bioAgeConfig";
 const KEY_STORE = "aether.bioage.geminiKey";
 const MODEL_STORE = "aether.bioage.geminiModel";
 const ACK_STORE = "aether.bioage.privacyAck";
+const ENABLED_STORE = "aether.bioage.geminiEnabled";
+const CHANGED_EVENT = "aether:gemini-changed";
 const DEFAULT_MODEL = "gemini-3.8-flash";
 // v3: bumped with the 3-bullet prompt and the trend/rank payload, so replies written under the
 // old prompt are never served for the new one. (v2 cleared the old truncated-reply cache.)
@@ -20,13 +22,35 @@ const MIN_CALL_GAP_MS = 10000;
 const endpoint = (model) =>
   `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
 
+const notifyChanged = () => window.dispatchEvent(new Event(CHANGED_EVENT));
+
 export const geminiSettings = {
   getKey: () => localStorage.getItem(KEY_STORE) || "",
-  setKey: (k) => (k ? localStorage.setItem(KEY_STORE, k) : localStorage.removeItem(KEY_STORE)),
+  setKey: (k) => {
+    if (k) localStorage.setItem(KEY_STORE, k);
+    else localStorage.removeItem(KEY_STORE);
+    notifyChanged();
+  },
   getModel: () => localStorage.getItem(MODEL_STORE) || DEFAULT_MODEL,
   setModel: (m) => localStorage.setItem(MODEL_STORE, m || DEFAULT_MODEL),
+  // Off by default and needs a saved key. Users who accepted the notice and saved a key before
+  // this toggle existed (no flag stored yet) stay on.
+  isEnabled: () => {
+    const hasKey = !!localStorage.getItem(KEY_STORE);
+    const flag = localStorage.getItem(ENABLED_STORE);
+    if (flag === null) return hasKey && localStorage.getItem(ACK_STORE) === "1";
+    return flag === "1" && hasKey;
+  },
+  setEnabled: (on) => {
+    localStorage.setItem(ENABLED_STORE, on ? "1" : "0");
+    notifyChanged();
+  },
   isAcknowledged: () => localStorage.getItem(ACK_STORE) === "1",
   acknowledge: () => localStorage.setItem(ACK_STORE, "1"),
+  subscribe: (listener) => {
+    window.addEventListener(CHANGED_EVENT, listener);
+    return () => window.removeEventListener(CHANGED_EVENT, listener);
+  },
   loadCache: () => {
     try { return JSON.parse(localStorage.getItem(CACHE_STORE) || "{}"); } catch { return {}; }
   },
@@ -154,7 +178,7 @@ const DRAG_TIPS = {
 
 export function friendlyError(code) {
   switch (code) {
-    case "NO_KEY": return "Add a Gemini key for a fuller explanation.";
+    case "NO_KEY": return "Gemini isn't set up. Turn on Gemini explanations and enter your API key in the Settings panel.";
     case "OFFLINE": return "You're offline — showing a local estimate.";
     case "QUOTA": return "Gemini quota reached (429) — showing a local estimate.";
     case "INVALID_KEY": return "Gemini rejected the key — showing a local estimate.";

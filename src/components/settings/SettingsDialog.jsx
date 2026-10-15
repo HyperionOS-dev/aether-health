@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import HeightField from "@/components/settings/HeightField";
 import { useDemoMode, setDemoMode } from "@/hooks/useDemoMode";
+import GeminiSection from "@/components/settings/GeminiSection";
 
 export default function SettingsDialog() {
   const demo = useDemoMode();
@@ -128,6 +129,7 @@ export default function SettingsDialog() {
               </div>
               <Switch id="demo-toggle" checked={demo === "1"} onCheckedChange={(c) => setDemoMode(c ? "1" : null)} aria-label="Toggle demo data" />
             </div>
+            <GeminiSection />
             {error && <p className="text-sm text-danger">{error}</p>}
             <Button onClick={save} disabled={busy} className="h-12 w-full rounded-xl bg-sleep text-background hover:bg-sleep/90">
               {busy ? (
