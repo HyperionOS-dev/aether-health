@@ -56,11 +56,10 @@ export default function RecoveryCard({ day, history = [] }) {
       : day?.time_to_full_hours != null
         ? `~${day.time_to_full_hours}h`
         : ">72h";
-  const latestValue = (key) => [...recent].reverse().find((row) => Number.isFinite(row[key]))?.[key] ?? null;
-  const rhr = Number.isFinite(day?.resting_hr) ? day.resting_hr : latestValue("resting_hr");
-  const skinTemp = Number.isFinite(day?.skin_temp) ? day.skin_temp : latestValue("skin_temp");
-  // Respiratory rate belongs to one night only, so it is never carried over from an
-  // earlier day: a day without its own night record shows "--".
+  // RHR, skin temp and respiratory rate belong to one day only, so none is carried over from
+  // an earlier day: a day without its own reading shows "--".
+  const rhr = Number.isFinite(day?.resting_hr) ? day.resting_hr : null;
+  const skinTemp = Number.isFinite(day?.skin_temp) ? day.skin_temp : null;
   const respiratoryRate = Number.isFinite(day?.respiratory_rate) ? day.respiratory_rate : null;
   const respiratoryBaseline = Number.isFinite(day?.respiratory_rate_baseline_min) && Number.isFinite(day?.respiratory_rate_baseline_max)
     ? `usual ${day.respiratory_rate_baseline_min}-${day.respiratory_rate_baseline_max}`
@@ -105,8 +104,8 @@ export default function RecoveryCard({ day, history = [] }) {
         <span className="shrink-0 text-right font-display text-lg font-bold">{timeToFull}</span>
       </div>
       <div className="mt-4 grid grid-cols-3 gap-3 border-t border-hairline pt-4">
-        {rhr != null && <Stat label="RHR" value={rhr} unit="bpm" />}
-        {skinTemp != null && <Stat label="SKIN TEMP" value={skinTemp} unit="°C" />}
+        <Stat label="RHR" value={rhr} unit="bpm" />
+        <Stat label="SKIN TEMP" value={skinTemp} unit="°C" />
         <Stat label="RESP. RATE" value={respiratoryRate} unit="br/min" caption={respiratoryBaseline} />
       </div>
 
