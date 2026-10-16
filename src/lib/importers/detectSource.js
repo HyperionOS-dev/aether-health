@@ -3,8 +3,11 @@
 // Certain from the bytes: a SQLite database and a FIT activity. Certain from the name: any
 // file with "gadgetbridge" in it, a .db, or a .fit. A zip is decided from its entry names,
 // read from the central directory without decompressing anything: Gadgetbridge tables are
-// upper-case (HUAWEI_ACTIVITY_SAMPLE.csv) or a nested .db. A CSV uses the same upper-case
-// rule on its name. The UI shows the guess and lets the user switch it.
+// upper-case (HUAWEI_ACTIVITY_SAMPLE.csv), its database is a nested .db, and the full data
+// export names the database after the file the Android app keeps it in — the entry
+// "database/Gadgetbridge", with no extension at all, beside a root "gadgetbridge.json".
+// A CSV uses the same upper-case rule on its name. The UI shows the guess and lets the user
+// switch it.
 
 export const HUAWEI = "huawei";
 export const GADGETBRIDGE = "gadgetbridge";
@@ -33,10 +36,15 @@ function baseName(name) {
 // A name made only of capitals, digits and underscores, with at least one capital: a table name.
 const isUpperTableName = (base) => /[A-Z]/.test(base) && base === base.toUpperCase();
 
-// One zip entry is Gadgetbridge when it is a nested database or a Gadgetbridge table name.
+// One zip entry is Gadgetbridge when it is a nested database, a file named after the
+// database, or a Gadgetbridge table name. "Gadgetbridge" with no extension is the name the
+// full data export uses for the database itself (database/Gadgetbridge) and for its root
+// manifest (gadgetbridge.json), and it is the same name sqlite.ts reads the archive by, so
+// the guess and the reader cannot disagree about which shape is in the zip.
 function isGadgetbridgeEntry(entryName) {
   const lower = String(entryName).toLowerCase();
   if (lower.endsWith(".db") || lower.endsWith(".sqlite")) return true;
+  if (baseName(entryName).toLowerCase() === "gadgetbridge") return true;
   return isUpperTableName(baseName(entryName));
 }
 

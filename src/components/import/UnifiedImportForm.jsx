@@ -151,7 +151,7 @@ export default function UnifiedImportForm() {
       >
         <Upload className={`h-6 w-6 ${dragging ? "text-sleep" : "text-muted-foreground"}`} />
         <span className="text-sm font-medium">{dragging ? "Drop your files here" : "Choose or drag export files"}</span>
-        <span className="text-xs text-muted-foreground">Huawei CSV, JSON or ZIP · Gadgetbridge ZIP, database or FIT</span>
+        <span className="text-xs text-muted-foreground">Huawei CSV, JSON or ZIP · Gadgetbridge ZIP, data export, database or FIT</span>
         <input
           type="file"
           accept=".json,.csv,.zip,.db,.fit"

@@ -136,6 +136,23 @@ describe("readTables", () => {
     assert.ok(result.tables.HUAWEI_WORKOUT_SUMMARY_SAMPLE);
   });
 
+  test("the full data export is read from its database folder, not as a loose table", async () => {
+    // "Mini Update.zip": the database keeps the Android app's own file name inside a
+    // database folder, with the manifest, the preferences and the raw device files around it.
+    const db = databaseBytes();
+    const one = new TextEncoder().encode("{}");
+    const result = await read(zipBytes([
+      ["preferences/global.json", one],
+      ["preferences/widget_steps.json", one],
+      ["gadgetbridge.json", one],
+      ["database/Gadgetbridge", db],
+      ["files/2C:07:86:A9:F1:21/raw/GPS/1791875768620_17_5_gps.bin", new Uint8Array([1, 2, 3])],
+    ]));
+    assert.equal(result.shape, "database");
+    assert.equal(result.expandedBytes, db.byteLength);
+    assert.ok(result.tables.HUAWEI_ACTIVITY_SAMPLE.startsWith("TIMESTAMP,HEART_RATE"));
+  });
+
   test("a zip holding neither a database nor table files is read as the table layout", async () => {
     const result = await read(zipBytes([["notes.txt", new TextEncoder().encode("hello")]]));
     assert.equal(result.shape, "zip");

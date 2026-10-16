@@ -68,6 +68,25 @@ test("a zip holding a nested database is Gadgetbridge", () => {
   assert.equal(guessSource("backup.zip", zipHead, ["Gadgetbridge.db"]), GADGETBRIDGE);
 });
 
+test("a full data export is Gadgetbridge, from the database's name or its manifest", () => {
+  // Settings > Export data on the phone writes this: the database keeps the name of the file
+  // the Android app stores it in — with no extension — in a database folder, a two-byte
+  // manifest sits at the root, and the device's raw files sit beside them. Not one of those
+  // names is an upper-case table name, so the archive used to be offered to the Huawei reader.
+  const entries = [
+    "preferences/global.json",
+    "preferences/device_2C:07:86:A9:F1:21.json",
+    "database/Gadgetbridge",
+    "gadgetbridge.json",
+    "files/2C:07:86:A9:F1:21/raw/GPS/1791875768620_17_5_gps.bin",
+  ];
+  assert.equal(guessSource("Mini Update.zip", zipHead, entries), GADGETBRIDGE);
+  // Either marker on its own is enough, so a hand-made or renamed archive still reads right.
+  assert.equal(guessSource("export.zip", zipHead, ["database/Gadgetbridge"]), GADGETBRIDGE);
+  assert.equal(guessSource("export.zip", zipHead, ["gadgetbridge.json"]), GADGETBRIDGE);
+  assert.equal(guessSource("export.zip", zipHead, ["Gadgetbridge"]), GADGETBRIDGE);
+});
+
 test("a zip with mixed-case entries is Huawei", () => {
   assert.equal(guessSource("export.zip", zipHead, ["metrics.csv", "detail.json"]), HUAWEI);
   assert.equal(guessSource("export.zip", zipHead, []), HUAWEI);
