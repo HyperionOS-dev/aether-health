@@ -28,7 +28,7 @@ export default function FactorGauge({ min, max, value, last30, unit = "", window
   };
 
   return (
-    <div className="relative h-16">
+    <div className="relative h-16 overflow-hidden">
       {/* segmented bar (vertically centered) */}
       <div className="absolute inset-x-0 top-1/2 flex h-2.5 -translate-y-1/2 overflow-hidden rounded-full">
         {Array.from({ length: 10 }).map((_, i) => (

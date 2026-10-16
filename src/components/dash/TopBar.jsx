@@ -17,8 +17,8 @@ export default function TopBar({ date, onDate, lastLog }) {
   const demo = useDemoMode();
   return (
     <header className="sticky top-0 z-30 border-b border-hairline bg-background/90 backdrop-blur">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4 sm:px-6">
-        <div className="flex items-center gap-2">
+      <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-x-3 gap-y-2 px-4 py-3 sm:h-16 sm:flex-nowrap sm:px-6 sm:py-0">
+        <div className="flex min-w-0 items-center gap-2">
           <span className="font-display text-lg font-bold tracking-[0.3em] text-sleep">AETHER</span>
           {demo && (
             <span className="rounded-full border border-sleep/40 bg-sleep/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-sleep">
@@ -26,7 +26,7 @@ export default function TopBar({ date, onDate, lastLog }) {
             </span>
           )}
         </div>
-        <div className="flex items-center rounded-xl bg-card p-1">
+        <div className="order-last flex w-full items-center justify-center rounded-xl bg-card p-1 sm:order-none sm:w-auto sm:justify-start">
           <button onClick={() => shift(-1)} className="flex h-10 w-10 items-center justify-center rounded-lg hover:bg-surface" aria-label="Previous day">
             <ChevronLeft className="h-5 w-5" />
           </button>
@@ -37,7 +37,7 @@ export default function TopBar({ date, onDate, lastLog }) {
             <ChevronRight className="h-5 w-5" />
           </button>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <div className="flex items-center gap-2 rounded-full border border-hairline px-3 py-1.5 text-xs text-muted-foreground">
             <span className={`h-2 w-2 rounded-full ${synced ? "bg-recovery shadow-[0_0_8px_hsl(var(--recovery))]" : "bg-muted-foreground"}`} />
             <span className="hidden sm:inline">

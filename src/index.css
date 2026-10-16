@@ -63,3 +63,13 @@
   }
 }
 
+/* The mobile "Sync health data" sheet is a vaul drawer, and vaul pins
+   `touch-action: none` on it. The sheet covers most of a phone screen, so that
+   also disabled pinch-zoom: you could not zoom back out until the sheet closed.
+   Two attribute selectors keep this ahead of vaul's own injected rule (which is
+   appended to <head> at runtime, after this stylesheet). Panning stays disabled,
+   so vaul's drag-to-dismiss and the sheet's own scroll area behave as before. */
+[data-vaul-drawer][data-vaul-drawer-direction] {
+  touch-action: pinch-zoom;
+}
+

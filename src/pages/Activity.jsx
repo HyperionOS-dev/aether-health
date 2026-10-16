@@ -24,7 +24,7 @@ export default function Activity() {
   const lastLog = data?.logs?.[0];
 
   return (
-    <div className="min-h-screen bg-background pb-28">
+    <div className="min-h-screen overflow-x-clip bg-background pb-28">
       <TopBar date={current} onDate={setDate} lastLog={lastLog} />
       <main className="mx-auto max-w-7xl space-y-4 px-4 py-6 sm:px-6">
         <div className="flex flex-wrap justify-end gap-2">

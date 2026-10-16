@@ -76,7 +76,7 @@ export default function RecoveryCard({ day, history = [] }) {
   }
 
   return (
-    <Card>
+    <Card className="min-w-0">
       <div className="flex items-start justify-between gap-3">
         <div>
           <Label>RECOVERY</Label>

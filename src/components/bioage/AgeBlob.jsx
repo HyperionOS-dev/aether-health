@@ -152,7 +152,7 @@ export default function AgeBlob({ number, deltaLabel, deltaTone = "younger", siz
 
   const c = TONES[deltaTone] || TONES.neutral;
   return (
-    <div className="relative mx-auto" style={{ width: size, height: size }}>
+    <div className="relative mx-auto w-full" style={{ maxWidth: size, aspectRatio: "1 / 1" }}>
       <div className="absolute inset-0 rounded-full" style={{ boxShadow: `0 0 70px 6px ${c.halo}` }} />
       <canvas ref={ref} className="relative h-full w-full" />
       <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center">
