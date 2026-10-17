@@ -432,8 +432,11 @@ export function sessionWindows(workouts: Record<string, any>[]) {
 
 // Turns the merged raw data for one day into a storable record.
 //
-// FIX 3 — resting HR comes from the sleep window only (the night that ended on this
-// date), with implausible readings dropped, and is read off a percentile band.
+// FIX 3 — resting HR is the watch's own resting value for the day when the export carries one,
+// and the sleep window's bottom band (the night that ended on this date) when it does not.
+// Implausible readings are dropped from both, and the band is a floor rather than a resting
+// average: preferring it reads a few beats under the watch's own screen, and every zone edge
+// downstream is built from resting HR.
 // FIX 5 — the same trace becomes minutes in heart-rate zones.
 export function finalizeDay(day: any, spans: { from: number; to: number }[] = []) {
   const o: any = { date: day.date };
@@ -466,10 +469,10 @@ export function finalizeDay(day: any, spans: { from: number; to: number }[] = []
       .filter((value) => value >= recoveryConfig.minRhr && value <= recoveryConfig.maxRhr)
     : [];
   o.rhr_samples_count = windowHr.length;
-  if (windowHr.length >= recoveryConfig.minRhrSamples) {
-    o.resting_hr = Math.round(percentile(windowHr, 0.05));
-  } else if (deviceRestingHr != null) {
+  if (deviceRestingHr != null) {
     o.resting_hr = deviceRestingHr;
+  } else if (windowHr.length >= recoveryConfig.minRhrSamples) {
+    o.resting_hr = Math.round(percentile(windowHr, 0.05));
   } else {
     delete o.resting_hr;
   }

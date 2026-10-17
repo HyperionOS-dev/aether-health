@@ -259,23 +259,26 @@ export function buildDays(
       }
     }
 
-    // Resting heart rate, best source first: the watch's own resting value for the day,
-    // then the same bottom-band derivation the CSV path uses, then the night's average.
-    // Measured on one shared day: device 58, trace band 56, night average 62 — the night
-    // average is a sleep-window mean, not a resting floor, so it is the last resort and
-    // whichever source was used is recorded on the record.
+    // Resting heart rate, best source first: the watch's own resting value for the day, then
+    // the same bottom-band derivation the CSV path uses. Measured on one shared day: device 58,
+    // trace band 56. The band is a floor and not a resting average — a p05 sits at the deepest
+    // sleep nadir, so it reads a few beats under the number the watch shows on its own screen,
+    // and every zone edge downstream is built from resting HR — which makes the device value
+    // the first choice wherever the export carries one, and the band the fallback for the days
+    // it does not (a watch that has not settled on a value yet). Whichever source was used is
+    // recorded on the record.
     const overnightHr = hasSleepWindow
       ? heartRateSamples
         .filter(([time, value]) => time >= sleepStart && time <= sleepEnd && value >= recoveryConfig.minRhr && value <= recoveryConfig.maxRhr)
         .map(([, value]) => value)
       : [];
     day.rhr_samples_count = overnightHr.length;
-    if (overnightHr.length >= recoveryConfig.minRhrSamples) {
-      day.resting_hr = Math.round(percentile(overnightHr, 0.05));
-      day.sources.resting_hr = "overnight_hr_p05";
-    } else if (day._deviceRhr?.length) {
+    if (day._deviceRhr?.length) {
       day.resting_hr = median(day._deviceRhr);
       day.sources.resting_hr = "device_resting_hr";
+    } else if (overnightHr.length >= recoveryConfig.minRhrSamples) {
+      day.resting_hr = Math.round(percentile(overnightHr, 0.05));
+      day.sources.resting_hr = "overnight_hr_p05";
     }
 
     if (day.resting_hr != null && points.length) {
