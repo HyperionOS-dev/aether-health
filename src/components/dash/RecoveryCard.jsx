@@ -3,7 +3,7 @@ import Card from "./Card";
 import Label from "./Label";
 import Sparkline from "./Sparkline";
 import { backend } from "@/api/backend";
-import { COLORS, recoveryTone } from "@/lib/metrics";
+import { recoveryTone } from "@/lib/metrics";
 import { SCORING_CONFIG, SHOW_RECOVERY_DETAILS } from "@/lib/scoring/config";
 
 function correlation(rows) {
@@ -91,8 +91,10 @@ export default function RecoveryCard({ day, history = [] }) {
           {tone.label}
         </span>
       </div>
-      <Label className="mt-4">HRV TREND - 14 DAYS</Label>
-      <Sparkline data={recent} dataKey="hrv" color={COLORS.recovery} height={96} />
+      {/* The trend is the recovery percentage itself, so the line, the reading above and the
+          status pill all share one scale and one colour. Per-night HRV stays in the audit table. */}
+      <Label className="mt-4">RECOVERY TREND - 14 DAYS</Label>
+      <Sparkline data={recent} dataKey="recovery" color={tone.color} height={96} />
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-hairline pt-4">
         <div>
           <Label>TIME TO FULL RECOVERY</Label>
