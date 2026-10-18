@@ -76,7 +76,7 @@ npm run build
 This creates a static `dist/` folder you can host anywhere, like Cloudflare Pages. Add your site's domain to **Firebase Authentication → Settings → Authorized domains**, or sign-in won't work there.
 
 ### 📥 Importing Your Data
-Export your data from **Gadgetbridge**, then upload it in the Sync panel — either the zip of table files, the database file itself (both are read in your browser), an individual table CSV, or a FIT activity file (such as a walk or run recorded on the watch), which adds its workouts. Want to look around first? Add `?demo=1` to the URL and it loads fake data that never gets saved.
+Export your data from **Gadgetbridge**, then upload it in the Sync panel — either the zip of table files, the database file itself (both are read in your browser), an individual table CSV, or a FIT activity file (such as a walk or run recorded on the watch), which adds its workouts. Want to look around first? Turn on demo mode in settings and it loads fake data that never gets saved.
 
 # 🛠️ Built With
 
