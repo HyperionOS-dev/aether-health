@@ -60,5 +60,11 @@ export const SCORING_CONFIG = Object.freeze({
   sleep: {
     consistencyK: 0.25,
     consistencyNights: 7,
+    // Minutes of sleep need one nap minute pays down. WHOOP describes need as
+    // baseline + strain + sleep debt - naps but does not publish the exchange rate, so
+    // 1:1 is a named, untuned guess.
+    napNeedCredit: 1.0, // untuned guess
+    // The adjusted need never falls below this share of the unadjusted need.
+    napNeedFloor: 0.5,
   },
 });

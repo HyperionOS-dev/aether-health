@@ -13,6 +13,15 @@ export default function SleepCard({ day }) {
   const total = STAGES.reduce((s, st) => s + (day?.[st.key] || 0), 0);
   const cons = day?.sleep_consistency ?? null;
   const variability = day?.sleep_duration_variability ?? null;
+  // Naps pay down the sleep need of the night they precede (SCORING_CONFIG.sleep.napNeedCredit).
+  const napMinutes = Number.isFinite(day?.nap_minutes) && day.nap_minutes > 0 ? day.nap_minutes : 0;
+  // The credit the scorer applied, in minutes. Days scored before that field existed
+  // fall back to the gap between the unadjusted and adjusted need, which is 0.1 h coarse.
+  const needCreditMinutes = Number.isFinite(day?.nap_need_credit_minutes)
+    ? Math.max(0, Math.round(day.nap_need_credit_minutes))
+    : day?.sleep_need_base != null && day?.sleep_need != null
+      ? Math.max(0, Math.round((day.sleep_need_base - day.sleep_need) * 60))
+      : 0;
   return (
     <Card>
       <div className="flex items-start justify-between">
@@ -42,6 +51,17 @@ export default function SleepCard({ day }) {
           </div>
         ))}
       </div>
+      {napMinutes > 0 && (
+        <div className="mt-4 flex items-center justify-between">
+          <Label>Naps</Label>
+          <span className="text-sm font-semibold tabular-nums">{fmtHours(napMinutes / 60)}</span>
+        </div>
+      )}
+      {needCreditMinutes > 0 && (
+        // A credited nap is always the night's own calendar day: the night filed on day D
+        // runs from D-1's evening to D's morning, so its naps were taken "yesterday".
+        <p className="mt-2 text-[10px] text-muted-foreground">Need reduced by {fmtHours(needCreditMinutes / 60)} (nap yesterday)</p>
+      )}
       <div className="mt-5 border-t border-hairline pt-4">
         <div className="flex items-center justify-between">
           <div>

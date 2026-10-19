@@ -7,6 +7,9 @@ export const ZONE_EDGES = SCORING_CONFIG.strain.zoneEdges;
 const ZONE_MULT = SCORING_CONFIG.strain.zoneMultipliers;
 const LOAD_DIVISOR = SCORING_CONFIG.strain.loadDivisor;
 const DEFAULT_RHR = SCORING_CONFIG.strain.defaultRhr;
+// Naps pay down sleep need before the night is measured against it; untuned guess, see config.js.
+const NAP_NEED_CREDIT = SCORING_CONFIG.sleep.napNeedCredit; // untuned guess
+const NAP_NEED_FLOOR = SCORING_CONFIG.sleep.napNeedFloor;
 
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -278,8 +281,52 @@ export function durationVariability(nights) {
   return Math.round(sd(hours) * 60);
 }
 
+const nextDate = (date) => {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+};
+
+// Minutes of nap credit owed to each filed day's night. A nap is taken on the day
+// BEFORE the night it shortens, so the credit rides with that night: a nap the importers
+// filed on the day it happened (window starting before their 18:00 evening cut) belongs
+// to the following night, while one they filed together with the night it precedes
+// (window starting at/after the cut — parse.ts:294, parse.ts:628) already sits there.
+// Every nap minute lands on exactly one night, and naps filed on one day add into a
+// single credit, so nothing is dropped twice or counted twice.
+function napCreditByNight(days) {
+  const EVENING_CUT_HOUR = 18;
+  const credits = new Map();
+  const add = (date, minutes) => credits.set(date, (credits.get(date) || 0) + minutes);
+  const filed = new Set(days.map((d) => d.date));
+  for (const day of days) {
+    const total = isNum(day.nap_minutes) && day.nap_minutes > 0 ? day.nap_minutes : 0;
+    if (!total) continue;
+    const windows = (Array.isArray(day.nap_windows) ? day.nap_windows : []).flatMap((window) => {
+      const match = String(window).match(/^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/);
+      if (!match) return [];
+      const from = Number(match[1]) * 60 + Number(match[2]);
+      const to = Number(match[3]) * 60 + Number(match[4]);
+      const minutes = to === from ? 0 : (to > from ? to : to + 1440) - from; // a nap over midnight
+      return [{ startHour: Math.floor(from / 60), minutes }];
+    }).filter((window) => window.minutes > 0);
+    // No readable window: leave the day's naps on its own night, as before.
+    if (!windows.length) { add(day.date, total); continue; }
+    const later = windows.filter((window) => window.startHour >= EVENING_CUT_HOUR);
+    const earlier = windows.filter((window) => window.startHour < EVENING_CUT_HOUR);
+    const length = (list) => list.reduce((sum, window) => sum + window.minutes, 0);
+    // A day whose naps straddle the cut is split by each nap's own length.
+    const stays = later.length ? Math.round((total * length(later)) / (length(later) + length(earlier))) : 0;
+    if (stays) add(day.date, stays);
+    if (total - stays) add(nextDate(day.date), total - stays);
+  }
+  for (const date of [...credits.keys()]) if (!filed.has(date)) credits.delete(date); // no imported night to credit
+  return credits;
+}
+
 export function computeScores(days, workouts, targets) {
   const ordered = [...days].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  const napCredits = napCreditByNight(ordered);
   const byDate = new Map();
   for (const w of workouts) {
     if (!byDate.has(w.date)) byDate.set(w.date, []);
@@ -302,20 +349,28 @@ export function computeScores(days, workouts, targets) {
     const stageSum = (d.deep_minutes || 0) + (d.light_minutes || 0) + (d.rem_minutes || 0);
     const sleepMinutes = d.sleep_minutes || stageSum || (d.sleep_hours ? d.sleep_hours * 60 : null);
     const sleep_hours = sleepMinutes ? r1(sleepMinutes / 60) : null;
-    const sleep_need = r1(7.5 + priorStrain * 0.05);
+    const sleep_need_base = r1(7.5 + priorStrain * 0.05);
+    // A nap is never added to the night above; it only pays down the need of the night
+    // it precedes, capped so the adjusted need keeps at least half of the base need.
+    // sleep_need is in HOURS, so the credited minutes are converted before subtracting.
+    const creditedMinutes = napCredits.get(d.date) || 0;
+    const napCredit = Math.min(NAP_NEED_CREDIT * (creditedMinutes / 60), sleep_need_base * (1 - NAP_NEED_FLOOR));
+    const sleep_need = r1(Math.max(sleep_need_base * NAP_NEED_FLOOR, sleep_need_base - napCredit));
+    // Recovery keeps reading the unadjusted performance, so naps can never move it.
+    const sleep_performance_base = sleep_hours ? Math.round(clamp((sleep_hours / sleep_need_base) * 100, 0, 100)) : null;
     const sleep_performance = sleep_hours ? Math.round(clamp((sleep_hours / sleep_need) * 100, 0, 100)) : null;
 
     const base = baselineV5AsOf(ordered, d.date);
-    const composite = recoveryCompositeV5(d.hrv, d.resting_hr, sleep_performance, base);
+    const composite = recoveryCompositeV5(d.hrv, d.resting_hr, sleep_performance_base, base);
     const nights = ordered.filter((x) => x.date <= d.date).slice(-SCORING_CONFIG.sleep.consistencyNights);
     const sleepSessionEnded = typeof d.sleep_end === "string" && Number.isFinite(Date.parse(d.sleep_end));
-    prepared.push({ day: d, base, composite, sleep_hours, sleep_need, sleep_performance, nights, sleepSessionEnded });
+    prepared.push({ day: d, base, composite, napCredit, sleep_hours, sleep_need, sleep_need_base, sleep_performance, sleep_performance_base, nights, sleepSessionEnded });
   }
 
   const speed = personalRecoverySpeed(prepared, workouts);
   let latestCompletedZc = null;
   for (const entry of prepared) {
-    const { day: d, base, composite, sleep_hours, sleep_need, sleep_performance, nights, sleepSessionEnded } = entry;
+    const { day: d, base, composite, napCredit, sleep_hours, sleep_need, sleep_need_base, sleep_performance, sleep_performance_base, nights, sleepSessionEnded } = entry;
     const timezone = d.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
     const snapshotAt = localSnapshotTime(d.date, timezone);
     const sleepEnd = d.sleep_end ? localDateTimeToEpoch(d.sleep_end, timezone) : NaN;
@@ -331,7 +386,7 @@ export function computeScores(days, workouts, targets) {
       hrv_z: composite.hrvZ == null ? null : r2(composite.hrvZ),
       rhr: isNum(d.resting_hr) ? d.resting_hr : null,
       rhr_z: composite.rhrZ == null ? null : r2(composite.rhrZ),
-      sleep_perf: sleep_performance,
+      sleep_perf: sleep_performance_base,
       sleep_z: composite.sleepZ == null ? null : r2(composite.sleepZ),
       zc: composite.zc == null ? null : r2(composite.zc),
       v5_composite_z: composite.zc == null ? null : r2(composite.zc),
@@ -372,7 +427,12 @@ export function computeScores(days, workouts, targets) {
       recovery_rating: d.recovery_rating ?? null,
       sleep_hours,
       sleep_need,
+      sleep_need_base,
       sleep_performance,
+      sleep_performance_base,
+      // The credit exactly as applied, so the card never has to read it back off two
+      // values that were each rounded to 0.1 h.
+      nap_need_credit_minutes: napCredit > 0 ? Math.round(napCredit * 60) : 0,
       recovery_projection: null,
       recovery_projection_low: null,
       recovery_projection_high: null,
