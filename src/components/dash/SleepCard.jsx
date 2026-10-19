@@ -9,6 +9,13 @@ const STAGES = [
   { key: "rem_minutes", label: "REM", cls: "bg-sleep/70" },
 ];
 
+const previousDate = (date) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) return null;
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+};
+
 export default function SleepCard({ day }) {
   const total = STAGES.reduce((s, st) => s + (day?.[st.key] || 0), 0);
   const cons = day?.sleep_consistency ?? null;
@@ -22,6 +29,13 @@ export default function SleepCard({ day }) {
     : day?.sleep_need_base != null && day?.sleep_need != null
       ? Math.max(0, Math.round((day.sleep_need_base - day.sleep_need) * 60))
       : 0;
+  // The score carries the days the credited naps were taken on, so "nap yesterday" is only
+  // claimed when that is what happened. Rows scored before that field existed keep the old
+  // wording: the credit they could apply was always the previous day's nap.
+  const credited = Array.isArray(day?.nap_need_credit_dates) ? day.nap_need_credit_dates : null;
+  const napYesterday = credited == null
+    ? true
+    : credited.length > 0 && credited.every((date) => date === previousDate(day?.date));
   return (
     <Card>
       <div className="flex items-start justify-between">
@@ -58,9 +72,9 @@ export default function SleepCard({ day }) {
         </div>
       )}
       {needCreditMinutes > 0 && (
-        // A credited nap is always the night's own calendar day: the night filed on day D
-        // runs from D-1's evening to D's morning, so its naps were taken "yesterday".
-        <p className="mt-2 text-[10px] text-muted-foreground">Need reduced by {fmtHours(needCreditMinutes / 60)} (nap yesterday)</p>
+        <p className="mt-2 text-[10px] text-muted-foreground">
+          Need reduced by {fmtHours(needCreditMinutes / 60)}{napYesterday ? " (nap yesterday)" : ""}
+        </p>
       )}
       <div className="mt-5 border-t border-hairline pt-4">
         <div className="flex items-center justify-between">

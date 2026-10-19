@@ -111,6 +111,7 @@ const STAGES: Record<string, string> = {
 };
 
 const NAP_GAP_MIN = 90; // a gap wider than this separates a nap from the night
+const MAX_NAP_SESSIONS = 6; // the scorer reads no more per day than this
 
 const toClock = (m: number) => {
   const d = new Date(m * 60000);
@@ -455,6 +456,7 @@ export function finalizeDay(day: any, spans: { from: number; to: number }[] = []
   if (!o.sleep_minutes && stageSum) o.sleep_minutes = stageSum;
   // Naps stay off sleep_minutes, which is the night's duration and nothing else.
   if (Array.isArray(day.nap_windows) && day.nap_windows.length) o.nap_windows = day.nap_windows;
+  if (Array.isArray(day.nap_sessions) && day.nap_sessions.length) o.nap_sessions = day.nap_sessions;
 
   // A date left holding nothing but a stray trace is not a day worth scoring.
   const keep = () => (Object.keys(o).length > 1 ? o : null);
@@ -547,6 +549,20 @@ function assignNightAndNaps(d: any) {
     d.nap_windows = naps.map(
       (c) => `${toClock(Math.min(...c.map((seg) => seg[0])))}-${toClock(Math.max(...c.map((seg) => seg[1])))}`,
     );
+    // The dated copy the scorer reads: the same local wall-clock shape as sleep_start, so a
+    // nap knows which night it shortens instead of being guessed from its hour. The window
+    // runs from the first staged minute to the last one, which is how the other exporter
+    // describes the same nap too, so a re-import through it credits that night once. A nap
+    // with nonsense or reversed stamps is dropped, and only the first MAX_NAP_SESSIONS stay.
+    d.nap_sessions = naps
+      .map((c) => ({
+        from: Math.min(...c.map((seg) => seg[0])),
+        to: Math.max(...c.map((seg) => seg[1])),
+        minutes: total(c),
+      }))
+      .filter((nap) => isNum(nap.from) && nap.from > 0 && isNum(nap.to) && nap.to > nap.from && nap.minutes > 0)
+      .slice(0, MAX_NAP_SESSIONS)
+      .map((nap) => ({ from: toIso(nap.from), to: toIso(nap.to), minutes: nap.minutes }));
   }
 }
 
@@ -686,6 +702,7 @@ export function parseMetricsCsv(text: string): ParsedData | null {
     if (d.awake_minutes) o.awake_minutes = d.awake_minutes;
     if (d.nap_minutes) o.nap_minutes = d.nap_minutes;
     if (d.nap_windows && d.nap_windows.length) o.nap_windows = d.nap_windows;
+    if (d.nap_sessions && d.nap_sessions.length) o.nap_sessions = d.nap_sessions;
     if (d.deep_minutes) o.deep_minutes = d.deep_minutes;
     if (d.light_minutes) o.light_minutes = d.light_minutes;
     if (d.rem_minutes) o.rem_minutes = d.rem_minutes;

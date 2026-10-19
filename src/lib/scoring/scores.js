@@ -287,19 +287,87 @@ const nextDate = (date) => {
   return d.toISOString().slice(0, 10);
 };
 
-// Minutes of nap credit owed to each filed day's night. A nap is taken on the day
-// BEFORE the night it shortens, so the credit rides with that night: a nap the importers
-// filed on the day it happened (window starting before their 18:00 evening cut) belongs
-// to the following night, while one they filed together with the night it precedes
-// (window starting at/after the cut — parse.ts:294, parse.ts:628) already sits there.
-// Every nap minute lands on exactly one night, and naps filed on one day add into a
-// single credit, so nothing is dropped twice or counted twice.
-function napCreditByNight(days) {
+const previousDate = (date) => {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+};
+
+// How far ahead of a nap a night may still be the one it shortens, and how many dated naps
+// one day may contribute.
+const NAP_NIGHT_WINDOW_HOURS = 36;
+const NAP_SESSION_LIMIT = 6;
+
+// Every nap window and bed time read here is the same local wall-clock text the importers
+// write ("YYYY-MM-DDTHH:mm"), so two naps and two nights compare as text and no zone
+// conversion can shift a nap onto the wrong night.
+const localStampMs = (value) => {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  const ms = Date.parse(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text) ? `${text}:00Z` : text);
+  return Number.isFinite(ms) ? ms : null;
+};
+
+// One day's dated naps, in order, capped at the stored limit. A session the importers could
+// not describe — no positive minutes, a missing, reversed or pre-1970 timestamp — is left
+// out, and a day left with none falls back to the window heuristic below.
+const datedNaps = (day) => (Array.isArray(day.nap_sessions) ? day.nap_sessions : [])
+  .flatMap((session) => {
+    if (!session || !isNum(session.minutes) || session.minutes <= 0) return [];
+    const from = localStampMs(session.from);
+    const to = localStampMs(session.to);
+    if (from == null || to == null || from <= 0 || to <= from) return [];
+    return [{ from: String(session.from), to: String(session.to), end: to, minutes: session.minutes }];
+  })
+  .slice(0, NAP_SESSION_LIMIT);
+
+// Minutes of nap credit owed to each filed day's night, plus the days those naps were taken
+// on. Both maps are keyed by the night's own date, which is the day the importers file.
+//
+// Dated naps say which night they pay down: the first night whose bed time is at or after
+// the nap's end, within NAP_NIGHT_WINDOW_HOURS. A nap shortens the night it precedes and
+// never the one that ended before it, a nap with no following imported night credits
+// nothing, and the same nap described twice — the two exporters file the same nap on
+// different rows, but with the same window — credits once.
+//
+// Rows written before the importers dated their naps keep the old window heuristic: a
+// daytime nap was filed on the day it happened and so belongs to the following night, while
+// an evening one was filed together with the night it precedes (parse.ts files a sleep
+// session starting at/after 18:00 under the next day) and already sits there. A day whose
+// naps straddle that cut splits by each nap's own length, losing no minute. Either way the
+// nap was taken the day before the night's own date, which is what the card shows as
+// "nap yesterday".
+function napCreditsByNight(days) {
   const EVENING_CUT_HOUR = 18;
   const credits = new Map();
-  const add = (date, minutes) => credits.set(date, (credits.get(date) || 0) + minutes);
+  const napDates = new Map();
   const filed = new Set(days.map((d) => d.date));
+  const add = (date, minutes, napDate) => {
+    if (!filed.has(date)) return; // no imported night to credit
+    credits.set(date, (credits.get(date) || 0) + minutes);
+    const list = napDates.get(date) || [];
+    if (napDate && !list.includes(napDate)) list.push(napDate);
+    napDates.set(date, list);
+  };
+
+  const nights = days
+    .map((day) => ({ date: day.date, bed: localStampMs(day.sleep_start) }))
+    .filter((night) => night.bed != null)
+    .sort((a, b) => a.bed - b.bed);
+  const lead = NAP_NIGHT_WINDOW_HOURS * 3600000;
+  const seen = new Set();
   for (const day of days) {
+    for (const nap of datedNaps(day)) {
+      const key = `${nap.from}|${nap.to}`; // the nap itself, not the row it was filed on
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const night = nights.find((n) => n.bed >= nap.end && n.bed - nap.end <= lead);
+      if (night) add(night.date, nap.minutes, nap.from.slice(0, 10));
+    }
+  }
+
+  for (const day of days) {
+    if (datedNaps(day).length) continue; // dated above, so never also by window
     const total = isNum(day.nap_minutes) && day.nap_minutes > 0 ? day.nap_minutes : 0;
     if (!total) continue;
     const windows = (Array.isArray(day.nap_windows) ? day.nap_windows : []).flatMap((window) => {
@@ -310,23 +378,25 @@ function napCreditByNight(days) {
       const minutes = to === from ? 0 : (to > from ? to : to + 1440) - from; // a nap over midnight
       return [{ startHour: Math.floor(from / 60), minutes }];
     }).filter((window) => window.minutes > 0);
+    const yesterday = previousDate(day.date); // when a nap filed with this night was taken
     // No readable window: leave the day's naps on its own night, as before.
-    if (!windows.length) { add(day.date, total); continue; }
+    if (!windows.length) { add(day.date, total, yesterday); continue; }
     const later = windows.filter((window) => window.startHour >= EVENING_CUT_HOUR);
     const earlier = windows.filter((window) => window.startHour < EVENING_CUT_HOUR);
     const length = (list) => list.reduce((sum, window) => sum + window.minutes, 0);
-    // A day whose naps straddle the cut is split by each nap's own length.
+    // A day whose naps straddle the cut is split by each nap's own length. The evening ones
+    // are yesterday's naps, the daytime ones are today's, so either way the credited night's
+    // own previous day is where the nap was taken.
     const stays = later.length ? Math.round((total * length(later)) / (length(later) + length(earlier))) : 0;
-    if (stays) add(day.date, stays);
-    if (total - stays) add(nextDate(day.date), total - stays);
+    if (stays) add(day.date, stays, yesterday);
+    if (total - stays) add(nextDate(day.date), total - stays, day.date);
   }
-  for (const date of [...credits.keys()]) if (!filed.has(date)) credits.delete(date); // no imported night to credit
-  return credits;
+  return { credits, napDates };
 }
 
 export function computeScores(days, workouts, targets) {
   const ordered = [...days].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  const napCredits = napCreditByNight(ordered);
+  const napCredits = napCreditsByNight(ordered);
   const byDate = new Map();
   for (const w of workouts) {
     if (!byDate.has(w.date)) byDate.set(w.date, []);
@@ -353,7 +423,7 @@ export function computeScores(days, workouts, targets) {
     // A nap is never added to the night above; it only pays down the need of the night
     // it precedes, capped so the adjusted need keeps at least half of the base need.
     // sleep_need is in HOURS, so the credited minutes are converted before subtracting.
-    const creditedMinutes = napCredits.get(d.date) || 0;
+    const creditedMinutes = napCredits.credits.get(d.date) || 0;
     const napCredit = Math.min(NAP_NEED_CREDIT * (creditedMinutes / 60), sleep_need_base * (1 - NAP_NEED_FLOOR));
     const sleep_need = r1(Math.max(sleep_need_base * NAP_NEED_FLOOR, sleep_need_base - napCredit));
     // Recovery keeps reading the unadjusted performance, so naps can never move it.
@@ -364,13 +434,14 @@ export function computeScores(days, workouts, targets) {
     const composite = recoveryCompositeV5(d.hrv, d.resting_hr, sleep_performance_base, base);
     const nights = ordered.filter((x) => x.date <= d.date).slice(-SCORING_CONFIG.sleep.consistencyNights);
     const sleepSessionEnded = typeof d.sleep_end === "string" && Number.isFinite(Date.parse(d.sleep_end));
-    prepared.push({ day: d, base, composite, napCredit, sleep_hours, sleep_need, sleep_need_base, sleep_performance, sleep_performance_base, nights, sleepSessionEnded });
+    const napCreditDates = napCredits.napDates.get(d.date) || [];
+    prepared.push({ day: d, base, composite, napCredit, napCreditDates, sleep_hours, sleep_need, sleep_need_base, sleep_performance, sleep_performance_base, nights, sleepSessionEnded });
   }
 
   const speed = personalRecoverySpeed(prepared, workouts);
   let latestCompletedZc = null;
   for (const entry of prepared) {
-    const { day: d, base, composite, napCredit, sleep_hours, sleep_need, sleep_need_base, sleep_performance, sleep_performance_base, nights, sleepSessionEnded } = entry;
+    const { day: d, base, composite, napCredit, napCreditDates, sleep_hours, sleep_need, sleep_need_base, sleep_performance, sleep_performance_base, nights, sleepSessionEnded } = entry;
     const timezone = d.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
     const snapshotAt = localSnapshotTime(d.date, timezone);
     const sleepEnd = d.sleep_end ? localDateTimeToEpoch(d.sleep_end, timezone) : NaN;
@@ -433,6 +504,9 @@ export function computeScores(days, workouts, targets) {
       // The credit exactly as applied, so the card never has to read it back off two
       // values that were each rounded to 0.1 h.
       nap_need_credit_minutes: napCredit > 0 ? Math.round(napCredit * 60) : 0,
+      // The days those credited naps were taken on, so the card can say "yesterday" only
+      // when that is true.
+      nap_need_credit_dates: napCredit > 0 ? [...napCreditDates].sort() : [],
       recovery_projection: null,
       recovery_projection_low: null,
       recovery_projection_high: null,

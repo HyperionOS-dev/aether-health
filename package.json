@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "test": "node --import ./src/lib/importers/gadgetbridge/node-alias-hooks.mjs --test src/lib/scoring/*.test.js src/lib/heatmapScale.test.js src/lib/bioAge.test.js src/lib/importers/gadgetbridge/*.test.js src/lib/importers/detectSource.test.js",
+    "test": "node --import ./src/lib/importers/gadgetbridge/node-alias-hooks.mjs --test src/lib/scoring/*.test.js src/lib/heatmapScale.test.js src/lib/bioAge.test.js src/lib/importers/gadgetbridge/*.test.js src/lib/importers/huawei/*.test.js src/lib/importers/detectSource.test.js",
     "lint": "eslint . --quiet",
     "lint:fix": "eslint . --fix",
     "typecheck": "tsc -p ./jsconfig.json",

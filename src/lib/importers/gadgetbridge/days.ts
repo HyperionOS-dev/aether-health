@@ -8,7 +8,8 @@
 // Sleep follows the same policy as the CSV path: stage rows are clustered, a gap wider
 // than 90 minutes starts a new session, the longest cluster is the night (duration, bed
 // and wake times), every other cluster is a nap. Stage code 5 is unmapped and stays out
-// of the night's duration entirely — it is counted only as unknown minutes.
+// of the night's duration entirely — it is counted only as unknown minutes. Each nap is
+// stored twice: its window for display, and the same session dated for the scorer.
 
 import { zoneForHr } from "@/lib/scoring/scores";
 import { SCORING_CONFIG } from "@/lib/scoring/config";
@@ -23,6 +24,7 @@ const reported = (row: string[], i: number, lo: number, hi: number): number | nu
 
 const SOURCE = "gadgetbridge_import";
 const NAP_GAP_MIN = 90; // wider than this separates a nap from the night
+const MAX_NAP_SESSIONS = 6; // the scorer reads no more per day than this
 const GAP_CAP_MIN = 5; // a wider gap carries no zone credit
 const COVER_SPAN_MIN = 360; // estimated wear needed before the day's trace is trusted
 const COVER_MIN_READINGS = 60;
@@ -152,6 +154,17 @@ export function buildDays(
       if (naps.length) {
         day.nap_minutes = naps.reduce((s, c) => s + total(c), 0);
         day.nap_windows = naps.map((c) => `${localClock(c.from)}-${localClock(c.to)}`);
+        // The dated copy the scorer reads: the same local wall-clock shape as sleep_start,
+        // so a nap knows which night it shortens instead of being guessed from its hour. A
+        // window ends one minute past the last staged row, so its length is the nap's own
+        // staged minutes and the other exporter describes the same nap with the same pair —
+        // a re-import through it therefore credits that night once, not twice. Windows the
+        // dump did not report are left out, and only the first MAX_NAP_SESSIONS are kept.
+        day.nap_sessions = naps
+          .filter((c) => Number.isFinite(c.from) && c.from > 0 && Number.isFinite(c.to) && c.to >= c.from)
+          .slice(0, MAX_NAP_SESSIONS)
+          .map((c) => ({ from: localIso(c.from), to: localIso(c.to + 1), minutes: total(c) }));
+        if (!day.nap_sessions.length) delete day.nap_sessions;
       }
     }
   }

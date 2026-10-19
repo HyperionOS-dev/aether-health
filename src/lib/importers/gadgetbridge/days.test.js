@@ -72,3 +72,52 @@ describe("buildDays resting heart rate", () => {
     assert.equal(day.sources.resting_hr, "overnight_hr_p05");
   });
 });
+
+// --- nap sessions -------------------------------------------------------------------
+// A nap is stored twice: nap_windows for the display, and nap_sessions — the same session
+// carrying its own calendar date — for the scorer, which no longer has to guess which night
+// a nap shortens from the hour it started at.
+
+const DAY = "2026-03-08"; // a Sunday
+const at = (date, hour, minute = 0) =>
+  Date.parse(`${date}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00Z`) / 1000;
+
+// One stage row per minute, all light sleep (stage 1).
+const minutesFrom = (from, count) => Array.from({ length: count }, (_, index) => [from + index * MINUTE, 1]);
+
+// Sat 23:00 -> Sun 07:00 (the night that ends on Sunday), a 30-minute Sunday 19:00 nap, then
+// Sun 23:00 -> Mon 07:00 (the night that ends on Monday).
+const napRows = () => [
+  ...minutesFrom(at("2026-03-07", 23), 480),
+  ...minutesFrom(at(DAY, 19), 30),
+  ...minutesFrom(at(DAY, 23), 480),
+];
+
+const napDays = () => new Map(
+  buildDays({ HUAWEI_SLEEP_STAGE_SAMPLE: csv("TIMESTAMP,STAGE", napRows()) }, TZ, 0)
+    .map((day) => [day.date, day]),
+);
+
+describe("buildDays nap sessions", () => {
+  test("the nap gets its own dated session beside its window", () => {
+    const sunday = napDays().get(DAY);
+    assert.equal(sunday.nap_minutes, 30);
+    assert.deepEqual(sunday.nap_windows, ["19:00-19:29"]);
+    // The window ends one minute past the last staged row, so its length is the nap's own
+    // staged minutes and the other exporter describes the same nap with the same pair.
+    assert.deepEqual(sunday.nap_sessions, [{ from: "2026-03-08T19:00", to: "2026-03-08T19:30", minutes: 30 }]);
+  });
+
+  test("the night is untouched by the dated nap", () => {
+    const sunday = napDays().get(DAY);
+    assert.equal(sunday.sleep_start, "2026-03-07T23:00");
+    assert.equal(sunday.sleep_end, "2026-03-08T06:59");
+    assert.equal(sunday.light_minutes, 480); // the nap is not part of the night
+  });
+
+  test("a day with no nap writes no nap fields at all", () => {
+    const monday = napDays().get("2026-03-09");
+    assert.equal("nap_minutes" in monday, false);
+    assert.equal("nap_sessions" in monday, false);
+  });
+});
