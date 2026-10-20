@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ChevronDown } from "lucide-react";
+import { MIN_DAYS_PER_FACTOR } from "@/lib/bioAgeConfig";
 import FactorGauge from "./FactorGauge";
 
 // Gauge ranges per factor. For RHR (lower is better) min > max so low values map to
@@ -48,11 +49,17 @@ export default function FactorRow({ factor, windowDays = 0 }) {
   const toneColor = yrs < 0 ? "#C9B5E8" : yrs > 0 ? "#FF5500" : "#A0A0A0";
 
   if (excluded) {
+    // A factor is held back until it has MIN_DAYS_PER_FACTOR days of its own metric on
+    // record, which for a sparsely worn metric such as steps can take weeks. Showing how
+    // far along it is keeps the row from reading as a stuck "Collecting".
+    const valid = factor.validDays || 0;
     return (
       <div className="rounded-xl border border-hairline bg-surface/40 p-4 opacity-60">
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium">{factor.label}</span>
-          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Collecting</span>
+          <span className="text-[11px] uppercase tracking-wider text-muted-foreground">
+            {valid >= MIN_DAYS_PER_FACTOR ? "Collecting" : `Collecting · ${valid}/${MIN_DAYS_PER_FACTOR} days`}
+          </span>
         </div>
       </div>
     );
