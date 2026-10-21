@@ -52,7 +52,7 @@ export default function RecoveryCard({ day, history = [], hoursFromDebt = null }
     : r >= 98
       ? "Fully recovered"
       : hoursFromDebt === 0
-        ? "Recovered from workouts"
+        ? "Workouts clear"
         : hoursFromDebt != null
           ? `~${hoursFromDebt}h`
           : ">72h";
@@ -95,18 +95,20 @@ export default function RecoveryCard({ day, history = [], hoursFromDebt = null }
           status pill all share one scale and one colour. Per-night HRV stays in the audit table. */}
       <Label className="mt-4">RECOVERY TREND - 14 DAYS</Label>
       <Sparkline data={recent} dataKey="recovery" color={tone.color} height={96} />
-      <div className="mt-4 flex items-center justify-between gap-3 border-t border-hairline pt-4">
-        <div>
-          <Label>TIME TO FULL RECOVERY</Label>
-          <p className="text-[10px] text-muted-foreground">Estimate - from your watch's workout recovery time.</p>
-          {hoursFromDebt === 0 && r < 98 && !day?.recovery_still_accruing && (
-            <p className="text-[10px] text-muted-foreground">Score is held down by last night's resting HR / HRV</p>
-          )}
-          {eta && r < 98 && !day?.recovery_still_accruing && (
-            <p className="text-[10px] text-muted-foreground">Back to 100% around {eta}</p>
-          )}
+      <div className="mt-4 border-t border-hairline pt-4">
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <Label className="whitespace-nowrap">TIME TO FULL RECOVERY</Label>
+          <span className="ml-auto shrink-0 text-right font-display text-lg font-bold">{timeToFull}</span>
         </div>
-        <span className="shrink-0 text-right font-display text-lg font-bold">{timeToFull}</span>
+        {/* These read as lines of the row above rather than as a second column, so a longer
+            value can never squeeze the title onto a second line. */}
+        <p className="mt-1 text-[10px] text-muted-foreground">Estimate - from your watch's workout recovery time.</p>
+        {hoursFromDebt === 0 && r < 98 && !day?.recovery_still_accruing && (
+          <p className="mt-1 text-[10px] text-muted-foreground">Score is held down by last night's resting HR / HRV</p>
+        )}
+        {eta && r < 98 && !day?.recovery_still_accruing && (
+          <p className="mt-1 text-[10px] text-muted-foreground">Back to 100% around {eta}</p>
+        )}
       </div>
       <div className="mt-4 grid grid-cols-3 gap-3 border-t border-hairline pt-4">
         <Stat label="RHR" value={rhr} unit="bpm" />
