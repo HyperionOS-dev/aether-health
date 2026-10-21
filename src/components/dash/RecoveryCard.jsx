@@ -52,7 +52,7 @@ export default function RecoveryCard({ day, history = [], hoursFromDebt = null }
     : r >= 98
       ? "Fully recovered"
       : hoursFromDebt === 0
-        ? "Workouts clear"
+        ? "Load cleared"
         : hoursFromDebt != null
           ? `~${hoursFromDebt}h`
           : ">72h";
@@ -102,9 +102,9 @@ export default function RecoveryCard({ day, history = [], hoursFromDebt = null }
         </div>
         {/* These read as lines of the row above rather than as a second column, so a longer
             value can never squeeze the title onto a second line. */}
-        <p className="mt-1 text-[10px] text-muted-foreground">Estimate - from your watch's workout recovery time.</p>
+        <p className="mt-1 text-[10px] text-muted-foreground">Estimated from your watch's workout recovery time.</p>
         {hoursFromDebt === 0 && r < 98 && !day?.recovery_still_accruing && (
-          <p className="mt-1 text-[10px] text-muted-foreground">Score is held down by last night's resting HR / HRV</p>
+          <p className="mt-1 text-[10px] text-muted-foreground">Training load has cleared. Your score reflects last night's resting HR, HRV and sleep.</p>
         )}
         {eta && r < 98 && !day?.recovery_still_accruing && (
           <p className="mt-1 text-[10px] text-muted-foreground">Back to 100% around {eta}</p>
