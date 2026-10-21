@@ -58,3 +58,20 @@ export function dateLabel(date) {
   if (diff === 1) return "Yesterday";
   return format(parseISO(date), "EEE, MMM d");
 }
+
+// BRS v1.2: the clock time "Back to 100% around ..." points at. A debt-only estimate can land
+// on a later day, so the weekday is included whenever the target is not today ("Fri 2:13 am"),
+// and a same-day target stays a bare clock time ("2:13 am").
+/**
+ * @param {number} ms target instant
+ * @param {string} timezone
+ * @param {{ now?: number, locale?: string }} [options] locale is for tests only; the app keeps the browser default
+ */
+export function recoveryEtaLabel(ms, timezone, { now = Date.now(), locale } = {}) {
+  if (!Number.isFinite(ms)) return null;
+  const dayKey = new Intl.DateTimeFormat(locale, { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" });
+  const clock = new Intl.DateTimeFormat(locale, { timeZone: timezone, hour: "numeric", minute: "2-digit" }).format(ms).toLowerCase();
+  if (dayKey.format(ms) === dayKey.format(now)) return clock;
+  const weekday = new Intl.DateTimeFormat(locale, { timeZone: timezone, weekday: "short" }).format(ms);
+  return `${weekday} ${clock}`;
+}

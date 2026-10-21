@@ -1,5 +1,9 @@
 export const SHOW_RECOVERY_DETAILS = false;
 
+// BRS version label. Display only: it must never feed a score, and it is not the stored
+// `algorithmVersion` stamp below, which stays put so existing records are not re-scored.
+export const BRS_VERSION = "1.2";
+
 export const SCORING_CONFIG = Object.freeze({
   algorithmVersion: "aether-scores-v6",
   strain: {

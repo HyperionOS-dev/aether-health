@@ -201,6 +201,31 @@ export function recoveryAtTime(workouts, zc, at, personalSpeed = SCORING_CONFIG.
   };
 }
 
+// BRS v1.2: hours until the workouts alone stop holding Recovery down.
+//
+// Deliberately debt-only. The body-signal penalty decays from the instant it is evaluated,
+// so folding it into this estimate made "time to full" restart at full strength every time
+// the app was opened: a bad night's resting HR / HRV read as a ~39 hour countdown that never
+// advanced, even with no workout debt left. Debt decays from each workout's own end time, so
+// it is anchored to the session and can be re-derived for any past day.
+//
+// Display only: the stored `time_to_full_hours` still comes from recoveryAtTime(), so stored
+// records and the headline Recovery number are unchanged. Returns 0 when the debt is already
+// at or below what "fully recovered" tolerates, and null when it has not cleared in the
+// simulated window (the card reads that as ">72h").
+export function hoursToRecoverFromDebt(workouts, at, personalSpeed = SCORING_CONFIG.recoveryV6.personalSpeedDefault) {
+  const config = SCORING_CONFIG.recoveryV6;
+  const time = at instanceof Date ? at.getTime() : Number(at);
+  if (!Number.isFinite(time)) return null;
+  // The same headroom the indirect simulation has: at fullyRecoveredAt the score tolerates
+  // (100 - fullyRecoveredAt) points of anything, debt included.
+  const tolerated = 100 - config.fullyRecoveredAt;
+  for (let hours = 0; hours <= config.simulationMaxHours; hours += config.simulationStepHours) {
+    if (workoutDebtAt(workouts, time + hours * 3600000, personalSpeed).debt <= tolerated) return hours;
+  }
+  return null;
+}
+
 export function localDateTimeToEpoch(value, timezone) {
   const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?/);
   if (!match) return NaN;

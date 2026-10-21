@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import useHealthData from "@/hooks/useHealthData";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -14,7 +14,7 @@ import SyncFab from "@/components/dash/SyncFab";
 import ImportPanel from "@/components/import/ImportPanel";
 import LogWorkoutDialog from "@/components/workout/LogWorkoutDialog";
 import BioAgeCard from "@/components/bioage/BioAgeCard";
-import { localDateTimeToEpoch, recoveryAtTime } from "@/lib/scoring/scores";
+import { hoursToRecoverFromDebt, localDateTimeToEpoch, recoveryAtTime } from "@/lib/scoring/scores";
 
 export default function HealthDetails() {
   const { data, isLoading } = useHealthData();
@@ -54,10 +54,20 @@ export default function HealthDetails() {
     : day;
   const workouts = allWorkouts.filter((w) => w.date === current);
   const lastLog = data?.logs?.[0];
+  // BRS v1.2: the card's time to full is the workout debt's own decay, re-derived from the
+  // stored sessions at that day's own snapshot instead of read from the penalty-included
+  // stored field. Memoised because it walks every session; the inputs are primitives plus the
+  // (stable) workouts array, so it only re-runs when a different day is selected.
+  const debtAt = Date.parse(displayedDay?.recovery_evaluated_at || displayedDay?.recovery_components?.snapshot_at || "");
+  const debtSpeed = displayedDay?.recovery_components?.personal_speed ?? 1;
+  const hoursFromDebt = useMemo(
+    () => (Number.isFinite(debtAt) ? hoursToRecoverFromDebt(allWorkouts, debtAt, debtSpeed) : null),
+    [allWorkouts, debtAt, debtSpeed],
+  );
 
   const cards = {
     strain: <StrainCard key="strain" day={day} workouts={workouts} />,
-    recovery: <RecoveryCard key="recovery" day={displayedDay} history={metrics} />,
+    recovery: <RecoveryCard key="recovery" day={displayedDay} history={metrics} hoursFromDebt={hoursFromDebt} />,
     sleep: <SleepCard key="sleep" day={day} />,
   };
 

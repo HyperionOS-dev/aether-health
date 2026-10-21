@@ -3,7 +3,7 @@ import Card from "./Card";
 import Label from "./Label";
 import Sparkline from "./Sparkline";
 import { backend } from "@/api/backend";
-import { recoveryTone } from "@/lib/metrics";
+import { recoveryEtaLabel, recoveryTone } from "@/lib/metrics";
 import { SCORING_CONFIG, SHOW_RECOVERY_DETAILS } from "@/lib/scoring/config";
 
 function correlation(rows) {
@@ -30,7 +30,7 @@ function Stat({ label, value, unit, caption = null }) {
   );
 }
 
-export default function RecoveryCard({ day, history = [] }) {
+export default function RecoveryCard({ day, history = [], hoursFromDebt = null }) {
   const queryClient = useQueryClient();
   const tone = recoveryTone(day?.recovery);
   const components = day?.recovery_components;
@@ -43,19 +43,19 @@ export default function RecoveryCard({ day, history = [] }) {
   const r = day?.recovery;
   const timezone = day?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const evaluatedAt = day?.recovery_evaluated_at || components?.snapshot_at;
-  const etaTimestamp = evaluatedAt && day?.time_to_full_hours != null
-    ? Date.parse(evaluatedAt) + day.time_to_full_hours * 3600000
-    : NaN;
-  const eta = Number.isFinite(etaTimestamp)
-    ? new Intl.DateTimeFormat(undefined, { timeZone: timezone, hour: "numeric", minute: "2-digit" }).format(etaTimestamp)
-    : null;
+  // BRS v1.2: the estimate counts down the workout debt's own decay, not the stored
+  // penalty-included field, so it is derived from the day's sessions in HealthDetails.
+  const etaTimestamp = hoursFromDebt > 0 && evaluatedAt ? Date.parse(evaluatedAt) + hoursFromDebt * 3600000 : NaN;
+  const eta = recoveryEtaLabel(etaTimestamp, timezone);
   const timeToFull = day?.recovery_still_accruing
     ? "Still accruing"
     : r >= 98
       ? "Fully recovered"
-      : day?.time_to_full_hours != null
-        ? `~${day.time_to_full_hours}h`
-        : ">72h";
+      : hoursFromDebt === 0
+        ? "Recovered from workouts"
+        : hoursFromDebt != null
+          ? `~${hoursFromDebt}h`
+          : ">72h";
   // RHR, skin temp and respiratory rate belong to one day only, so none is carried over from
   // an earlier day: a day without its own reading shows "--".
   const rhr = Number.isFinite(day?.resting_hr) ? day.resting_hr : null;
@@ -98,7 +98,10 @@ export default function RecoveryCard({ day, history = [] }) {
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-hairline pt-4">
         <div>
           <Label>TIME TO FULL RECOVERY</Label>
-          <p className="text-[10px] text-muted-foreground">Estimate - from your watch's recovery time, adjusted by your HRV, resting HR and sleep.</p>
+          <p className="text-[10px] text-muted-foreground">Estimate - from your watch's workout recovery time.</p>
+          {hoursFromDebt === 0 && r < 98 && !day?.recovery_still_accruing && (
+            <p className="text-[10px] text-muted-foreground">Score is held down by last night's resting HR / HRV</p>
+          )}
           {eta && r < 98 && !day?.recovery_still_accruing && (
             <p className="text-[10px] text-muted-foreground">Back to 100% around {eta}</p>
           )}
