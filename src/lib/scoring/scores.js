@@ -10,6 +10,8 @@ const DEFAULT_RHR = SCORING_CONFIG.strain.defaultRhr;
 // Naps pay down sleep need before the night is measured against it; untuned guess, see config.js.
 const NAP_NEED_CREDIT = SCORING_CONFIG.sleep.napNeedCredit; // untuned guess
 const NAP_NEED_FLOOR = SCORING_CONFIG.sleep.napNeedFloor;
+// A row shorter than this is a nap, not a night, so it stays out of the consistency window.
+const MIN_NIGHT_MINUTES = SCORING_CONFIG.sleep.minNightMinutes; // untuned guess
 
 const isNum = (v) => typeof v === "number" && Number.isFinite(v);
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -419,6 +421,21 @@ function napCreditsByNight(days) {
   return { credits, napDates };
 }
 
+// The minutes that make a row a night: the same fallback order as the night's own hours
+// below (sleep_minutes, then the staged sum, then sleep_hours). A row with none of them
+// carries no measurement to call a nap, so it is left alone.
+const nightMinutes = (row) =>
+  row.sleep_minutes
+  || (row.deep_minutes || 0) + (row.light_minutes || 0) + (row.rem_minutes || 0)
+  || (row.sleep_hours ? row.sleep_hours * 60 : null);
+
+// Only a row that can be measured as shorter than a night is a nap and stays out. A row with
+// no minute count at all keeps its place in the window, as it had before this rule existed.
+const isNight = (row) => {
+  const minutes = nightMinutes(row);
+  return minutes == null || minutes >= MIN_NIGHT_MINUTES;
+};
+
 export function computeScores(days, workouts, targets) {
   const ordered = [...days].sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const napCredits = napCreditsByNight(ordered);
@@ -457,7 +474,13 @@ export function computeScores(days, workouts, targets) {
 
     const base = baselineV5AsOf(ordered, d.date);
     const composite = recoveryCompositeV5(d.hrv, d.resting_hr, sleep_performance_base, base);
-    const nights = ordered.filter((x) => x.date <= d.date).slice(-SCORING_CONFIG.sleep.consistencyNights);
+    // Only nights enter this window. A row whose only recorded sleep is a nap carries that
+    // nap in sleep_start/sleep_end — both importers file the day's largest cluster as the
+    // night — and one afternoon nap reads as a clock time half a day from every real night,
+    // which drove sleep_consistency to 0 for that day and the six nights after it.
+    const nights = ordered
+      .filter((x) => x.date <= d.date && isNight(x))
+      .slice(-SCORING_CONFIG.sleep.consistencyNights);
     const sleepSessionEnded = typeof d.sleep_end === "string" && Number.isFinite(Date.parse(d.sleep_end));
     const napCreditDates = napCredits.napDates.get(d.date) || [];
     prepared.push({ day: d, base, composite, napCredit, napCreditDates, sleep_hours, sleep_need, sleep_need_base, sleep_performance, sleep_performance_base, nights, sleepSessionEnded });
