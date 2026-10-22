@@ -79,74 +79,81 @@ export default function SettingsDialog() {
           <SettingsIcon className="h-5 w-5" />
         </button>
       </DialogTrigger>
-      <DialogContent className="max-w-md rounded-2xl border-hairline bg-card">
-        <DialogHeader>
+      <DialogContent className="flex max-h-[85svh] w-[calc(100vw_-_2rem)] max-w-md flex-col gap-0 overflow-hidden rounded-2xl border-hairline bg-card p-0">
+        {/* Phone-first panel: a header and footer that stay put with one scrolling body in
+            between. The panel is capped against the small viewport height, so it can never
+            run off the top or bottom of a phone screen the way a centred block does. */}
+        <DialogHeader className="shrink-0 space-y-1.5 border-b border-hairline px-5 pb-4 pr-14 pt-5 text-left">
           <DialogTitle className="font-display text-lg">Your profile</DialogTitle>
           <DialogDescription>
             Used to estimate the calories burned in sessions you log manually.
           </DialogDescription>
         </DialogHeader>
         {loading ? (
-          <div className="flex justify-center py-10">
+          <div className="flex flex-1 items-center justify-center py-10">
             <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
           </div>
         ) : (
-          <div className="space-y-5">
-            <HeightField cm={heightCm} unit={unit} onUnit={setUnit} onChange={setHeightCm} />
-            <div className="space-y-2">
-              <Label htmlFor="set-weight">Weight (kg)</Label>
-              <Input
-                id="set-weight"
-                type="number"
-                inputMode="decimal"
-                placeholder={importedWeight ? String(importedWeight) : "e.g. 75"}
-                value={weightKg ?? ""}
-                onChange={(e) => setWeightKg(e.target.value === "" ? "" : Number(e.target.value))}
-                className="h-11 rounded-xl border-hairline bg-surface"
-              />
-              <p className="text-xs text-muted-foreground">
-                {importedWeight
-                  ? `Imported from Huawei Health: ${importedWeight} kg. Leave empty to keep using it.`
-                  : "Leave empty to keep using your latest imported weight."}
-              </p>
-            </div>
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-hairline bg-surface/40 p-3">
-              <div>
-                <Label htmlFor="import-time-toggle" className="text-sm">Show import time</Label>
-                <p className="text-xs text-muted-foreground">Include the time in names of future imports.</p>
+          <>
+            <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain px-5 py-5">
+              <HeightField cm={heightCm} unit={unit} onUnit={setUnit} onChange={setHeightCm} />
+              <div className="space-y-2">
+                <Label htmlFor="set-weight">Weight (kg)</Label>
+                <Input
+                  id="set-weight"
+                  type="number"
+                  inputMode="decimal"
+                  placeholder={importedWeight ? String(importedWeight) : "e.g. 75"}
+                  value={weightKg ?? ""}
+                  onChange={(e) => setWeightKg(e.target.value === "" ? "" : Number(e.target.value))}
+                  className="h-11 rounded-xl border-hairline bg-surface"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {importedWeight
+                    ? `Imported from Huawei Health: ${importedWeight} kg. Leave empty to keep using it.`
+                    : "Leave empty to keep using your latest imported weight."}
+                </p>
               </div>
-              <Switch
-                id="import-time-toggle"
-                checked={importLogIncludeTime}
-                onCheckedChange={setImportLogIncludeTime}
-                aria-label="Include time in future import names"
-              />
-            </div>
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-hairline bg-surface/40 p-3">
-              <div>
-                <Label htmlFor="demo-toggle" className="text-sm">Demo data</Label>
-                <p className="text-xs text-muted-foreground">Preview the dashboard with generated sample data instead of your sync.</p>
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-hairline bg-surface/40 p-3">
+                <div>
+                  <Label htmlFor="import-time-toggle" className="text-sm">Show import time</Label>
+                  <p className="text-xs text-muted-foreground">Include the time in names of future imports.</p>
+                </div>
+                <Switch
+                  id="import-time-toggle"
+                  checked={importLogIncludeTime}
+                  onCheckedChange={setImportLogIncludeTime}
+                  aria-label="Include time in future import names"
+                />
               </div>
-              <Switch id="demo-toggle" checked={demo === "1"} onCheckedChange={(c) => setDemoMode(c ? "1" : null)} aria-label="Toggle demo data" />
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-hairline bg-surface/40 p-3">
+                <div>
+                  <Label htmlFor="demo-toggle" className="text-sm">Demo data</Label>
+                  <p className="text-xs text-muted-foreground">Preview the dashboard with generated sample data instead of your sync.</p>
+                </div>
+                <Switch id="demo-toggle" checked={demo === "1"} onCheckedChange={(c) => setDemoMode(c ? "1" : null)} aria-label="Toggle demo data" />
+              </div>
+              <GeminiSection />
             </div>
-            <GeminiSection />
-            {error && <p className="text-sm text-danger">{error}</p>}
-            <Button onClick={save} disabled={busy} className="h-12 w-full rounded-xl bg-sleep text-background hover:bg-sleep/90">
-              {busy ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving…
-                </>
-              ) : saved ? (
-                <>
-                  <Check className="mr-2 h-4 w-4" />
-                  Saved
-                </>
-              ) : (
-                "Save settings"
-              )}
-            </Button>
-          </div>
+            <div className="shrink-0 space-y-3 border-t border-hairline px-5 py-4">
+              {error && <p className="text-sm text-danger">{error}</p>}
+              <Button onClick={save} disabled={busy} className="h-12 w-full rounded-xl bg-sleep text-background hover:bg-sleep/90">
+                {busy ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Saving…
+                  </>
+                ) : saved ? (
+                  <>
+                    <Check className="mr-2 h-4 w-4" />
+                    Saved
+                  </>
+                ) : (
+                  "Save settings"
+                )}
+              </Button>
+            </div>
+          </>
         )}
       </DialogContent>
     </Dialog>
