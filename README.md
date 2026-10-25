@@ -35,7 +35,7 @@ Aether Health is a _privacy-first_ dashboard that turns your **Huawei watch data
 
 # 📘 What's Inside
 
-### 🦋 Butterfly Recovery System
+### 🦋 Butterfly Recovery System (BRS v1.2)
 **100% means fully recovered.** A hard workout drops it, and it climbs back using your watch's own recovery time, adjusted by your **HRV, resting heart rate and sleep**. It also shows roughly how many hours are left until you're back at full. It's an _estimate_, not a measurement.
 
 ### 😴 Sleep & Strain
